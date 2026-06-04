@@ -1,138 +1,243 @@
+
 import numpy as np
-import pandas as pd
+
 from heston_calibrator import HestonCalibrator
 from heston_simulator import HestonMultiSimulator
 
-# ==============================================================================
-# 1. PHYSICAL CALIBRATION FROM CSV FILES
-# ==============================================================================
-print("Starting historical calibration from CSV downloads...")
-cal = HestonCalibrator(
-    csv_files = {
-        "SPX.csv":  "SPX",
-        "SX5E.csv": "SX5E",
-        "SMI.csv":  "SMI",
-    },
-    rv_window  = 21,
-    mle_refine = False,
-)
-result = cal.calibrate()
-print("Calibration complete.")
 
-# ==============================================================================
-# 2. CONFIGURING THE PHYSICAL FORECASTING SIMULATION
-# ==============================================================================
-# The simulation utilizes the true historical drifts (mu) extracted 
-# by your calibrator from your data files.
+def run_structured_note(
+    coupon_rate=0.10,
+    floor_level=0.95,
+    maturity=1.0,
+    n_paths=50000,
+    N=252,
+    seed=42,
+    csv_files=None,
+    rv_window=21,
+    mle_refine=False,
+):
+    """
+    Runs the full historical calibration, Heston simulation,
+    and structured note evaluation.
 
-T = 1.0          # 12 Months maturity
-N = 252          # Trading days
-n_paths = 50000  # Number of paths for statistical forecasting
-seed = 42
+    Returns a dictionary containing summary statistics,
+    simulation paths, and diagnostics for use in Streamlit.
+    """
 
-print(f"\nRunning physical multi-asset Heston simulation ({n_paths} paths)...")
-sim = HestonMultiSimulator(
-    params   = result.params,
-    corr_SS  = result.corr_SS,
-    corr_VV  = result.corr_VV,
-    corr_SV  = result.corr_SV,
-    T        = T,
-    N        = N,
-    n_paths  = n_paths,
-    seed     = seed,
-)
-sim_results = sim.run()
+    if csv_files is None:
+        csv_files = {
+            "SPX.csv": "SPX",
+            "SX5E.csv": "SX5E",
+            "SMI.csv": "SMI",
+        }
 
-# ==============================================================================
-# 3. STRUCTURED NOTE OPERATIONAL ENGINE (ANNUALIZED RETURNS)
-# ==============================================================================
-print("\nEvaluating structured note contract rules over simulated paths...")
+    # ==========================================================
+    # 1. CALIBRATION
+    # ==========================================================
 
-asset_names = [p.name for p in result.params]
-n_assets = len(asset_names)
+    cal = HestonCalibrator(
+        csv_files=csv_files,
+        rv_window=rv_window,
+        mle_refine=mle_refine,
+    )
 
-# Combine the list of paths into a single 3D numpy array of shape (n_paths, N+1, n_assets)
-sim_prices = np.stack(sim_results["S_paths"], axis=2)
+    result = cal.calibrate()
 
-# Normalize paths to find relative performance (S_t / S_0)
-S0_vector = np.array([p.S0 for p in result.params]).reshape(1, 1, n_assets)
-perf_paths = sim_prices / S0_vector
+    # ==========================================================
+    # 2. HESTON SIMULATION
+    # ==========================================================
 
-# Vectorized tracking of the worst performing underlying asset across all steps
-worst_of_paths = np.min(perf_paths, axis=2)
+    sim = HestonMultiSimulator(
+        params=result.params,
+        corr_SS=result.corr_SS,
+        corr_VV=result.corr_VV,
+        corr_SV=result.corr_SV,
+        T=maturity,
+        N=N,
+        n_paths=n_paths,
+        seed=seed,
+    )
 
-# Set precise daily steps matching 3M, 6M, and 9M milestones
-steps_per_quarter = N // 4
-obs_steps = [steps_per_quarter, steps_per_quarter * 2, steps_per_quarter * 3]
+    sim_results = sim.run()
 
-# Allocation arrays to collect empirical outcomes
-nominal_payoffs = np.zeros(n_paths)
-annualized_returns = np.zeros(n_paths)
-autocall_events = np.zeros(n_paths)  # Tracks the exact quarter of automatic execution (0 if never)
+    # ==========================================================
+    # 3. STRUCTURED NOTE ENGINE
+    # ==========================================================
 
-for idx in range(n_paths):
-    autocalled_early = False
-    
-    # Evaluate programmatic contractual execution on specific observation steps
-    for q, step in enumerate(obs_steps):
-        t_years = (q + 1) * 0.25
-        worst_of_perf = worst_of_paths[idx, step]
-        
-        # AUTOMATIC CALL RULE: Triggered if worst-of asset performance >= 95%
-        if worst_of_perf >= 0.95:
-            # Note terminates automatically. Returns 100% principal + 10% p.a. prorated coupon
-            payout = 1.0 + (0.10 * t_years)
+    asset_names = [p.name for p in result.params]
+    n_assets = len(asset_names)
+
+    sim_prices = np.stack(
+        sim_results["S_paths"],
+        axis=2
+    )
+
+    S0_vector = np.array(
+        [p.S0 for p in result.params]
+    ).reshape(1, 1, n_assets)
+
+    perf_paths = sim_prices / S0_vector
+
+    worst_of_paths = np.min(
+        perf_paths,
+        axis=2
+    )
+
+    steps_per_quarter = N // 4
+
+    obs_steps = [
+        steps_per_quarter,
+        steps_per_quarter * 2,
+        steps_per_quarter * 3,
+    ]
+
+    nominal_payoffs = np.zeros(n_paths)
+
+    annualized_returns = np.zeros(n_paths)
+
+    autocall_events = np.zeros(n_paths)
+
+    for idx in range(n_paths):
+
+        autocalled_early = False
+
+        for q, step in enumerate(obs_steps):
+
+            t_years = (q + 1) * 0.25
+
+            worst_perf = worst_of_paths[idx, step]
+
+            if worst_perf >= floor_level:
+
+                payout = (
+                    1.0
+                    + coupon_rate * t_years
+                )
+
+                nominal_payoffs[idx] = payout
+
+                annualized_returns[idx] = (
+                    payout ** (1.0 / t_years)
+                ) - 1.0
+
+                autocall_events[idx] = q + 1
+
+                autocalled_early = True
+
+                break
+
+        if not autocalled_early:
+
+            worst_final = worst_of_paths[idx, N]
+
+            if worst_final >= floor_level:
+
+                payout = (
+                    floor_level
+                    + (worst_final - floor_level)
+                )
+
+            else:
+
+                payout = floor_level
+
             nominal_payoffs[idx] = payout
-            
-            # Annualize based on the exact fraction of the year held before being called
-            annualized_returns[idx] = (payout ** (1.0 / t_years)) - 1.0
-            
-            autocall_events[idx] = q + 1
-            autocalled_early = True
-            break  # Subsequent observations are void once the note is called
-            
-    # If the note survives all quarters without triggering, evaluate final Maturity (T = 1.0)
-    if not autocalled_early:
-        t_years = 1.0
-        worst_of_final = worst_of_paths[idx, N]
-        
-        if worst_of_final >= 0.95:
-            # Scenario A: Worst-of index finishes above 95% -> Full upside payout
-            payout = 0.95 + 1.00 * (worst_of_final - 0.95)
-        else:
-            # Scenario B: Worst-of index is below 95% -> Hard capital floor applies
-            payout = 0.95
-            
-        nominal_payoffs[idx] = payout
-        # At T=1.0, the annualized return is identical to the nominal return rate
-        annualized_returns[idx] = (payout ** (1.0 / t_years)) - 1.0
 
-# ==============================================================================
-# 4. PERFORMANCE ANALYSIS & STATS OUTPUT
-# ==============================================================================
-mean_nominal_return = np.mean(nominal_payoffs)
-mean_annualized_return = np.mean(annualized_returns)
+            annualized_returns[idx] = payout - 1.0
 
-prob_q1 = np.mean(autocall_events == 1)
-prob_q2 = np.mean(autocall_events == 2)
-prob_q3 = np.mean(autocall_events == 3)
-prob_mat = np.mean(autocall_events == 0)
-prob_floor = np.mean((autocall_events == 0) & (worst_of_paths[:, N] < 0.95))
+    # ==========================================================
+    # 4. SUMMARY STATISTICS
+    # ==========================================================
 
-print("\n" + "="*60)
-print("       REAL-WORLD PROFILE PERFORMANCE FORECAST (P-MEASURE)     ")
-print("="*60)
-print(f"Underlyings Basket                       : {', '.join(asset_names)}")
-print(f"Expected Nominal Payout at Termination   : ${mean_nominal_return:.4f} (per $1.00 invested)")
-print(f"Expected Absolute Total Return           : {(mean_nominal_return - 1.0) * 100:.2f}%")
-print(f"Expected Annualized Rate of Return (IRR) : {mean_annualized_return * 100:.2f}%")
-print("-"*60)
-print(f"Probability of Automatic Call at 3M (Q1) : {prob_q1 * 100:.2f}%")
-print(f"Probability of Automatic Call at 6M (Q2) : {prob_q2 * 100:.2f}%")
-print(f"Probability of Automatic Call at 9M (Q3) : {prob_q3 * 100:.2f}%")
-print(f"Probability of Surviving to Maturity     : {prob_mat * 100:.2f}%")
-print(f"Probability of Ending in Capital Floor   : {prob_floor * 100:.2f}%")
-print("="*60)
+    mean_nominal_payout = np.mean(
+        nominal_payoffs
+    )
 
-# Run structural diagnostic plots
-sim.plot()
+    mean_annualized_return = np.mean(
+        annualized_returns
+    )
+
+    prob_q1 = np.mean(
+        autocall_events == 1
+    )
+
+    prob_q2 = np.mean(
+        autocall_events == 2
+    )
+
+    prob_q3 = np.mean(
+        autocall_events == 3
+    )
+
+    prob_mat = np.mean(
+        autocall_events == 0
+    )
+
+    prob_floor = np.mean(
+        (autocall_events == 0)
+        & (worst_of_paths[:, N] < floor_level)
+    )
+
+    return {
+
+        # Summary statistics
+        "expected_nominal_payout":
+            mean_nominal_payout,
+
+        "expected_total_return":
+            mean_nominal_payout - 1.0,
+
+        "expected_irr":
+            mean_annualized_return,
+
+        "prob_q1":
+            prob_q1,
+
+        "prob_q2":
+            prob_q2,
+
+        "prob_q3":
+            prob_q3,
+
+        "prob_maturity":
+            prob_mat,
+
+        "prob_floor":
+            prob_floor,
+
+        # Useful for Streamlit plots
+        "annualized_returns":
+            annualized_returns,
+
+        "nominal_payoffs":
+            nominal_payoffs,
+
+        "autocall_events":
+            autocall_events,
+
+        "worst_of_paths":
+            worst_of_paths,
+
+        "sim_prices":
+            sim_prices,
+
+        "asset_names":
+            asset_names,
+
+        # Calibration outputs
+        "params":
+            result.params,
+
+        "corr_SS":
+            result.corr_SS,
+
+        "corr_VV":
+            result.corr_VV,
+
+        "corr_SV":
+            result.corr_SV,
+
+        # Raw simulator output
+        "sim_results":
+            sim_results,
+    }
