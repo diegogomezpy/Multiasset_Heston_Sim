@@ -1,42 +1,68 @@
 # Multi-Asset Heston Simulator & Structured Note Engine
 
-A Python framework for calibrating, simulating, and analyzing a **multi-asset Heston stochastic volatility model** using historical market data. The project supports calibration directly from Yahoo Finance CSV downloads, Monte Carlo simulation of correlated equity indices, and valuation of structured products such as worst-of autocallable notes.
+A Python framework for calibrating, simulating, and analyzing a **multi-asset Heston stochastic volatility model** using historical market data.
+
+The project supports:
+
+- Historical calibration of Heston parameters
+- Multi-asset Monte Carlo simulation
+- Correlated stochastic volatility dynamics
+- Structured note payoff analysis
+- Correlation diagnostics and validation
+- Real-world forecasting under the physical measure
 
 ---
 
 ## Features
 
 ### Historical Heston Calibration
-- Calibrates Heston parameters from historical daily price data:
-  - Mean reversion speed (κ)
-  - Long-run variance (θ)
-  - Volatility of volatility (ξ)
-  - Leverage effect (ρ)
-  - Initial variance (V₀)
-- Supports:
-  - Yahoo Finance downloads
-  - Preloaded pandas DataFrames
-  - Raw CSV files
-- Optional MLE refinement after Method-of-Moments calibration
+
+Calibrates the following Heston parameters directly from historical data:
+
+- κ (mean reversion speed)
+- θ (long-run variance)
+- ξ (volatility of volatility)
+- ρ (leverage effect)
+- V₀ (current variance)
+
+Supports:
+
+- Yahoo Finance downloads
+- Raw Yahoo Finance CSV files
+- Preloaded pandas DataFrames
+
+Optional maximum likelihood refinement is available after Method-of-Moments calibration.
+
+---
 
 ### Multi-Asset Simulation
-- Simulates multiple correlated assets simultaneously
-- Full stochastic volatility dynamics
-- Correlated:
-  - Asset returns
-  - Variance processes
-  - Asset-volatility leverage effects
-- Positive semi-definite correlation correction using Higham projection
-- Euler-Maruyama discretization with full truncation
+
+Simulates multiple correlated assets simultaneously under stochastic volatility.
+
+Captures:
+
+- Return-return correlations
+- Variance-variance correlations
+- Asset-volatility leverage effects
+
+Uses:
+
+- Euler-Maruyama discretization
+- Full truncation scheme for variance positivity
+- Higham nearest-PSD correction when required
+
+---
 
 ### Diagnostics Dashboard
+
 Automatically generates:
 
-- Price path simulations
-- Volatility path simulations
+- Simulated price paths
+- Volatility paths
 - Terminal log-return distributions
-- Correlation diagnostics
-- Input vs realized correlation comparison
+- Input correlation heatmaps
+- Realized correlation heatmaps
+- Correlation error diagnostics
 
 Example output:
 
@@ -44,39 +70,41 @@ Example output:
 
 ---
 
-## Model Dynamics
+# Model Dynamics
 
 For each asset:
 
-\[
-dS_t = S_t \sqrt{V_t} \, dW_S
-\]
+Price process:
 
-\[
-dV_t = \kappa(\theta - V_t)dt + \xi\sqrt{V_t}dW_V
-\]
+S(t + dt) = S(t) * exp(-0.5 * V(t) * dt + sqrt(V(t)) * dW_S)
 
-with
+Variance process:
 
-\[
-Corr(dW_S,dW_V)=\rho
-\]
+dV = κ(θ − V)dt + ξ * sqrt(V) * dW_V
 
-Cross-asset dependencies are modeled through a block correlation matrix:
+Leverage relationship:
 
-\[
-C=
-\begin{bmatrix}
-Corr_{SS} & Corr_{SV} \\
-Corr_{SV}^T & Corr_{VV}
-\end{bmatrix}
-\]
+Corr(dW_S, dW_V) = ρ
 
-allowing simultaneous correlation between:
+---
 
-- Asset returns
-- Variance shocks
-- Leverage effects
+## Correlation Structure
+
+The simulator builds a full block correlation matrix:
+
+```text
+        | Corr_SS   Corr_SV |
+C   =   |                   |
+        | Corr_SVᵀ Corr_VV |
+```
+
+Where:
+
+- Corr_SS = return-return correlations
+- Corr_VV = variance-variance correlations
+- Corr_SV = return-volatility correlations
+
+This allows simultaneous dependence between asset returns and volatility shocks.
 
 ---
 
@@ -95,74 +123,80 @@ allowing simultaneous correlation between:
 
 ---
 
-## Calibration Methodology
+# Calibration Methodology
 
-### Step 1 — Data Loading
+## Step 1 — Data Loading
 
 Historical adjusted close prices are loaded from:
 
 - Yahoo Finance
 - CSV files
-- DataFrames
+- pandas DataFrames
 
-### Step 2 — Return Construction
+---
 
-Two return series are created:
+## Step 2 — Return Construction
 
-#### 1-Day Returns
+### One-Day Log Returns
 
-\[
-r_t^{(1)}=\ln\left(\frac{S_t}{S_{t-1}}\right)
-\]
+r₁(t) = ln(S(t) / S(t−1))
 
 Used for:
 
 - Realized variance estimation
 - Leverage effect estimation
 
-#### 2-Day Overlapping Returns
+### Two-Day Overlapping Returns
 
-\[
-r_t^{(2)}=\ln\left(\frac{S_t}{S_{t-2}}\right)
-\]
+r₂(t) = ln(S(t) / S(t−2))
 
 Used for:
 
 - Cross-asset correlation estimation
 
-This mitigates asynchronous market closing times between US and European indices.
+Using overlapping two-day returns helps reduce artificial decorrelation caused by asynchronous market close times between U.S. and European markets.
 
-### Step 3 — Realized Variance Proxy
+---
+
+## Step 3 — Realized Variance Proxy
 
 Rolling realized variance:
 
-\[
-RV_t = Var(r_t) \times 252
-\]
+RV(t) = Var(r₁) × 252
 
-### Step 4 — Method of Moments Calibration
+where r₁ denotes one-day log returns.
+
+---
+
+## Step 4 — Method of Moments Calibration
 
 Parameters are estimated directly from historical data:
 
-| Parameter | Estimation |
+| Parameter | Estimation Method |
 |------------|------------|
-| θ | Long-run variance |
-| V₀ | Latest realized variance |
+| θ | Sample variance |
+| V₀ | Latest rolling variance |
 | κ | AR(1) mean reversion |
 | ξ | Variance increment volatility |
 | ρ | Return-volatility correlation |
 
-### Step 5 — Optional MLE Refinement
+---
 
-Refines estimates using approximate conditional likelihood.
+## Step 5 — Optional MLE Refinement
 
-### Step 6 — Correlation Estimation
+The initial Method-of-Moments estimates can be refined using approximate maximum likelihood estimation.
 
-Produces:
+---
 
-- Return-return correlations
-- Variance-variance correlations
-- Leverage matrix
+## Step 6 — Correlation Estimation
+
+The calibration produces:
+
+- Corr_SS
+- Corr_VV
+- Corr_SV
+
+which are passed directly into the simulator.
 
 ---
 
@@ -188,7 +222,7 @@ result = cal.calibrate()
 
 ---
 
-## Multi-Asset Simulation
+## Simulation
 
 ```python
 from heston_simulator import HestonMultiSimulator
@@ -212,67 +246,85 @@ sim.plot()
 
 # Structured Note Engine
 
-The repository includes a practical application:
+The repository includes a practical structured-product application.
 
-## Worst-of Autocallable Note
-
-Underlying basket:
+## Underlyings
 
 - S&P 500 (SPX)
 - Euro Stoxx 50 (SX5E)
 - Swiss Market Index (SMI)
 
-### Observation Dates
+---
+
+## Product Type
+
+Worst-of autocallable note.
+
+---
+
+## Observation Dates
 
 - 3 months
 - 6 months
 - 9 months
 
-### Autocall Condition
+---
 
-Triggered if:
+## Autocall Condition
 
-\[
-Worst\ Asset \ge 95\%
-\]
+The note automatically redeems if the worst-performing underlying remains above 95% of its initial value:
 
-of initial value.
+```text
+min(S_i / S_i,0) ≥ 95%
+```
 
-### Coupon
+---
 
-10% per annum, prorated to observation date.
+## Coupon
 
-### Maturity Payoff
+If called early:
 
-If:
+- Principal returned
+- 10% annual coupon paid pro-rata
 
-\[
-Worst\ Asset \ge 95\%
-\]
+Examples:
 
-Investor receives upside participation.
+| Observation | Coupon |
+|------------|------------|
+| 3M | 2.5% |
+| 6M | 5.0% |
+| 9M | 7.5% |
+
+---
+
+## Maturity Payoff
+
+If the worst-performing asset finishes above 95%:
+
+```text
+Payoff = 95% + Participation Above 95%
+```
 
 Otherwise:
 
-\[
-95\%
-\]
+```text
+Payoff = 95%
+```
 
-capital floor applies.
+representing the hard capital floor.
 
 ---
 
 # Example Output Metrics
 
-The engine computes:
+The simulation engine reports:
 
 - Expected payout
-- Expected return
-- Annualized IRR
-- Probability of autocall at:
-  - 3 months
-  - 6 months
-  - 9 months
+- Expected total return
+- Expected annualized IRR
+- Probability of autocall at 3M
+- Probability of autocall at 6M
+- Probability of autocall at 9M
 - Probability of maturity
 - Probability of capital floor scenario
 
@@ -282,9 +334,11 @@ Example:
 ============================================================
 REAL-WORLD PROFILE PERFORMANCE FORECAST (P-MEASURE)
 ============================================================
+
 Expected Annualized Return: 7.83%
 
-Probability of Autocall:
+Probability of Automatic Call:
+
 Q1: 28.4%
 Q2: 17.1%
 Q3: 10.6%
@@ -294,6 +348,7 @@ Probability of Maturity:
 
 Probability of Capital Floor:
 15.2%
+
 ============================================================
 ```
 
@@ -305,13 +360,13 @@ The simulator verifies that realized correlations match calibration targets.
 
 Example:
 
-| Pair | Input | Realized |
+| Pair | Target | Realized |
 |--------|--------|--------|
 | SPX-SX5E | 0.63 | 0.59 |
 | SPX-SMI | 0.54 | 0.52 |
 | SX5E-SMI | 0.79 | 0.77 |
 
-This serves as a consistency check for the Cholesky-based dependency structure.
+This provides a consistency check for the correlation structure used in the Monte Carlo simulation.
 
 ---
 
@@ -329,12 +384,13 @@ pip install numpy pandas scipy matplotlib yfinance
 
 This framework can be used for:
 
-- Exotic equity derivatives
 - Structured note valuation
-- Market risk simulation
-- Portfolio stress testing
+- Exotic equity derivatives
+- Basket options
 - Monte Carlo forecasting
-- Correlation analysis
+- Portfolio stress testing
+- Market risk analysis
+- Correlation modeling
 - Quantitative finance research
 - Heston model experimentation
 
@@ -346,16 +402,15 @@ Potential extensions include:
 
 - Risk-neutral calibration from option surfaces
 - Local-stochastic volatility models
-- Jump diffusion extensions
+- Jump-diffusion models
 - Variance swap pricing
 - Barrier options
-- Basket options
-- Structured credit applications
+- Basket option pricing
 - GPU acceleration
-- Sobol / Quasi-Monte Carlo simulation
+- Sobol and Quasi-Monte Carlo methods
 
 ---
 
 # Disclaimer
 
-This project is intended for educational and research purposes. It is not investment advice and should not be used as the sole basis for financial decisions.
+This project was developed for educational, research, and quantitative finance applications. It is not investment advice and should not be relied upon as the sole basis for investment decisions.
