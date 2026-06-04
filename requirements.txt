@@ -1,7 +1,7 @@
 streamlit
+plotly
 numpy
 pandas
 scipy
 matplotlib
-plotly
 yfinance

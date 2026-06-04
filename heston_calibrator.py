@@ -82,6 +82,7 @@ import pandas as pd
 from dataclasses import dataclass, field
 from typing import Optional, Union
 from scipy.optimize import minimize
+from scipy import stats
 
 # HestonParams lives in heston_simulator — import it
 from heston_simulator import HestonParams
@@ -102,12 +103,14 @@ class CalibrationResult:
     corr_SS     : np.ndarray (n, n)   – return-return correlations
     corr_VV     : np.ndarray (n, n)   – variance-variance correlations
     corr_SV     : np.ndarray (n, n)   – diagonal leverage matrix
+    t_dof       : int                 – degrees of freedom for Student-t copula
     diagnostics : dict                – intermediate series for inspection
     """
     params:      list
     corr_SS:     np.ndarray
     corr_VV:     np.ndarray
     corr_SV:     np.ndarray
+    t_dof:       int = 5
     diagnostics: dict = field(default_factory=dict)
 
     def summary(self) -> None:
@@ -121,6 +124,7 @@ class CalibrationResult:
             feller_str = f"✓ (margin {margin:.4f})" if ok else f"✗ VIOLATED (margin {margin:.4f})"
             print(f"\n  {p.name}")
             print(f"    S0    = {p.S0:.2f}")
+            print(f"    mu    = {p.mu:.4f}   ({p.mu*100:.1f}% p.a.)")
             print(f"    V0    = {p.V0:.5f}   (σ ≈ {np.sqrt(p.V0)*100:.1f}%)")
             print(f"    theta = {p.theta:.5f}   (σ ≈ {np.sqrt(p.theta)*100:.1f}%)")
             print(f"    kappa = {p.kappa:.4f}")
@@ -135,6 +139,8 @@ class CalibrationResult:
         _print_matrix(self.corr_VV, names)
         print(f"\n  corr_SV (diagonal leverage, cross terms = 0):")
         _print_matrix(self.corr_SV, names)
+        print(f"\n  Student-t copula: ν = {self.t_dof} "
+              f"(fitted from return tail behaviour)")
         print("=" * 65 + "\n")
 
 
@@ -268,6 +274,21 @@ class HestonCalibrator:
         corr_VV = self._corr_VV(rv_df)
         corr_SV = self._corr_SV(params_list)
 
+        # Step 7: Estimate Student-t copula degrees of freedom
+        # Fit a univariate t-distribution to each asset's daily log-returns via MLE,
+        # then take the median across assets. Clamped to [3, 30].
+        # ν → 3: very heavy tails. ν → 30: near-Gaussian.
+        dof_estimates = []
+        for i in range(len(names)):
+            try:
+                nu, _, _ = stats.t.fit(lr1[:, i], floc=0)
+                dof_estimates.append(nu)
+            except Exception:
+                dof_estimates.append(5.0)
+        t_dof = int(round(float(np.clip(np.median(dof_estimates), 3, 30))))
+        print(f"[Calibrator] Student-t copula ν = {t_dof} "
+              f"(per-asset fits: {[f'{v:.1f}' for v in dof_estimates]})")
+
         diagnostics = {
             "prices":  prices,
             "lr1":     pd.DataFrame(lr1, columns=names),
@@ -280,6 +301,7 @@ class HestonCalibrator:
             corr_SS     = corr_SS,
             corr_VV     = corr_VV,
             corr_SV     = corr_SV,
+            t_dof       = t_dof,
             diagnostics = diagnostics,
         )
         result.summary()
@@ -486,6 +508,10 @@ class HestonCalibrator:
         dt  = 1.0 / 252.0
         eps = 1e-8
 
+        # mu: annualised drift from mean log-return
+        # Use the full sample mean — this is the physical measure drift
+        mu = float(np.mean(lr1) / dt)
+
         # theta: long-run variance
         theta = float(np.var(lr1) / dt)
 
@@ -527,7 +553,7 @@ class HestonCalibrator:
             print(f"  [{name}] Feller enforced: kappa nudged to {kappa:.4f}")
 
         print(f"  [MoM] {name}: kappa={kappa:.3f}  theta={theta:.5f}  "
-              f"xi={xi:.3f}  rho={rho:.3f}  V0={V0:.5f}")
+              f"xi={xi:.3f}  rho={rho:.3f}  V0={V0:.5f}  mu={mu:.4f} ({mu*100:.1f}% p.a.)")
 
         return HestonParams(
             name  = name,
@@ -537,6 +563,7 @@ class HestonCalibrator:
             xi    = xi,
             rho   = rho,
             V0    = V0,
+            mu    = mu,
         )
 
     # ------------------------------------------------------------------
@@ -596,6 +623,7 @@ class HestonCalibrator:
         return HestonParams(
             name=p0.name, S0=p0.S0,
             kappa=kappa, theta=theta, xi=xi, rho=rho, V0=p0.V0,
+            mu=p0.mu,  # drift unchanged by MLE (estimated separately from mean return)
         )
 
     # ------------------------------------------------------------------
