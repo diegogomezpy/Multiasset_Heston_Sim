@@ -2,7 +2,7 @@
 
 A Python framework for calibrating, simulating, and pricing a **multi-asset Heston stochastic volatility model** against real market data, with a full structured product engine for **Phoenix Memory Autocallable notes** on any basket of equity underlyings.
 
-Built as an internal tool at CADIEM Casa de Bolsa and deployed as an interactive dashboard.
+Built as an internal tool and deployed as an interactive dashboard.
 
 ---
 
