@@ -23,10 +23,11 @@ from data.loader     import load_prices
 
 from translations import Translator
 from charts import (
-    build_payoff_distribution, build_fan_chart, build_wof_fan,
+    build_irr_distribution, build_fan_chart, build_wof_fan,
     build_path_price_chart, build_path_wof_chart, build_corr_heatmap,
     build_backtest_outcome_bar, build_worst_asset_pie,
-    build_backtest_irr_scatter, build_historical_prices, build_wof_rolling,
+    build_backtest_irr_scatter, build_historical_prices,
+    build_historical_wof_path,
 )
 
 # ==========================================================================
@@ -50,39 +51,77 @@ hr{border-color:#c8e6c8}
 # Available underlyings
 # ==========================================================================
 UNDERLYING_OPTIONS = {
-    "SPX — S&P 500":        "^GSPC",
-    "SX5E — Euro Stoxx 50": "^STOXX50E",
-    "SMI — Swiss Market":   "^SSMI",
-    "NDX — Nasdaq 100":     "^NDX",
-    "FTSE — FTSE 100":      "^FTSE",
-    "DAX — DAX 40":         "^GDAXI",
-    "NKY — Nikkei 225":     "^N225",
-    "HSI — Hang Seng":      "^HSI",
-    "GS — Goldman Sachs":   "GS",
-    "JPM — J.P. Morgan":    "JPM",
-    "MS — Morgan Stanley":  "MS",
-    "NVDA — NVIDIA":        "NVDA",
-    "PLTR — Palantir":      "PLTR",
-    "TSLA — Tesla":         "TSLA",
-    "AAPL — Apple":         "AAPL",
-    "MSFT — Microsoft":     "MSFT",
-    "AMZN — Amazon":        "AMZN",
-    "META — Meta":          "META",
+    # ── Equity indices ───────────────────────────────────────────────────
+    "SPX — S&P 500":            "^GSPC",
+    "NDX — Nasdaq 100":         "^NDX",
+    "RUT — Russell 2000":       "^RUT",
+    "SX5E — Euro Stoxx 50":     "^STOXX50E",
+    "DAX — DAX 40":             "^GDAXI",
+    "FTSE — FTSE 100":          "^FTSE",
+    "CAC — CAC 40":             "^FCHI",
+    "SMI — Swiss Market":       "^SSMI",
+    "NKY — Nikkei 225":         "^N225",
+    "HSI — Hang Seng":          "^HSI",
+    "KOSPI — Korea":            "^KS11",
+    "ASX — Australia":          "^AXJO",
+    "IBEX — Spain":             "^IBEX",
+    "MIB — Italy":              "FTSEMIB.MI",
+    # ── US Banks & Financials ────────────────────────────────────────────
+    "GS — Goldman Sachs":       "GS",
+    "JPM — J.P. Morgan":        "JPM",
+    "MS — Morgan Stanley":      "MS",
+    "BAC — Bank of America":    "BAC",
+    "C — Citigroup":            "C",
+    "WFC — Wells Fargo":        "WFC",
+    "BLK — BlackRock":          "BLK",
+    # ── US Tech ─────────────────────────────────────────────────────────
+    "AAPL — Apple":             "AAPL",
+    "MSFT — Microsoft":         "MSFT",
+    "NVDA — NVIDIA":            "NVDA",
+    "AMZN — Amazon":            "AMZN",
+    "META — Meta":              "META",
+    "GOOGL — Alphabet":         "GOOGL",
+    "TSLA — Tesla":             "TSLA",
+    "PLTR — Palantir":          "PLTR",
+    "AMD — AMD":                "AMD",
+    "INTC — Intel":             "INTC",
+    "CRM — Salesforce":         "CRM",
+    "NFLX — Netflix":           "NFLX",
+    # ── European stocks ──────────────────────────────────────────────────
+    "ASML — ASML":              "ASML",
+    "SAP — SAP":                "SAP",
+    "NESN — Nestlé":            "NESN.SW",
+    "NOVN — Novartis":          "NOVN.SW",
+    "ROG — Roche":              "ROG.SW",
+    "MC — LVMH":                "MC.PA",
+    "OR — L'Oréal":             "OR.PA",
+    "SAN — Santander":          "SAN.MC",
+    # ── Commodities & ETFs ───────────────────────────────────────────────
+    "GLD — Gold ETF":           "GLD",
+    "SLV — Silver ETF":         "SLV",
+    "USO — Oil ETF":            "USO",
+    "XLE — Energy ETF":         "XLE",
+    "XLF — Financials ETF":     "XLF",
+    "EEM — EM ETF":             "EEM",
 }
 UNDERLYING_LABELS  = list(UNDERLYING_OPTIONS.keys())
-_DISPLAY_TO_LABEL  = {v.split(" — ")[0]: k for k, v in UNDERLYING_OPTIONS.items()}
+_DISPLAY_TO_LABEL  = {k.split(" — ")[0]: k for k in UNDERLYING_OPTIONS.keys()}
+# Also map by yfinance symbol → label for JSON loading
+_TICKER_TO_LABEL   = {v: k for k, v in UNDERLYING_OPTIONS.items()}
 
 # ==========================================================================
 # Session state defaults
 # ==========================================================================
 _DEFAULTS = {
-    "page":           "setup",   # "setup" | "dashboard"
-    "run_terms":      None,
+    "page":             "setup",   # "setup" | "dashboard"
+    "run_terms":        None,
     "selected_tickers": None,
-    "n_paths":        10000,
-    "seed":           42,
-    "results":        None,
-    "path_num":       0,
+    "n_paths":          10000,
+    "seed":             42,
+    "results":          None,
+    "path_num":         0,
+    "setup_ul_default": None,    # set when JSON is loaded to override multiselect
+    "custom_tickers":   {},      # {symbol: display_name} for user-entered tickers
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -125,7 +164,25 @@ if st.session_state["page"] == "setup":
     loaded_terms = None
     if uploaded is not None:
         try:
-            loaded_terms = NoteTerms.from_json(uploaded.read().decode())
+            raw = uploaded.read().decode()
+            loaded_terms = NoteTerms.from_json(raw)
+            # Resolve tickers from config to known labels (or keep as custom)
+            if loaded_terms.tickers:
+                resolved = []
+                custom_from_json = {}
+                for sym, disp in loaded_terms.tickers.items():
+                    if sym in _TICKER_TO_LABEL:
+                        resolved.append(_TICKER_TO_LABEL[sym])
+                    else:
+                        # Not in our list — add as custom ticker
+                        custom_lbl = f"{disp} — {sym} (custom)"
+                        custom_from_json[sym] = disp
+                        resolved.append(custom_lbl)
+                # Only update if different from current to avoid re-render loops
+                if st.session_state["setup_ul_default"] != resolved:
+                    st.session_state["setup_ul_default"] = resolved
+                    st.session_state["custom_tickers"] = custom_from_json
+                    st.rerun()
             st.success(f"Config loaded: **{loaded_terms.name}**")
         except Exception as e:
             st.error(f"Invalid JSON: {e}")
@@ -137,18 +194,49 @@ if st.session_state["page"] == "setup":
     # ── Underlyings ───────────────────────────────────────────────────────
     st.subheader("Underlyings")
 
-    if loaded_terms and loaded_terms.tickers:
-        default_ul = [_DISPLAY_TO_LABEL[n] for n in loaded_terms.tickers.values()
-                      if n in _DISPLAY_TO_LABEL]
-        if not default_ul:
-            default_ul = ["SPX — S&P 500", "SX5E — Euro Stoxx 50", "SMI — Swiss Market"]
-    else:
-        default_ul = ["SPX — S&P 500", "SX5E — Euro Stoxx 50", "SMI — Swiss Market"]
+    # Build full option list including any custom tickers from session state
+    custom_tickers = st.session_state.get("custom_tickers", {})
+    all_labels = UNDERLYING_LABELS + [
+        f"{disp} — {sym} (custom)" for sym, disp in custom_tickers.items()
+    ]
+
+    # Default: session state override (from JSON) or fallback
+    default_ul = st.session_state["setup_ul_default"] or                  ["SPX — S&P 500", "SX5E — Euro Stoxx 50", "SMI — Swiss Market"]
+    # Filter to only valid options
+    default_ul = [d for d in default_ul if d in all_labels]
 
     selected_labels = st.multiselect(
-        "Select underlyings (2–5)", UNDERLYING_LABELS,
-        default=default_ul, key="setup_underlyings",
+        "Select underlyings (2–5)", all_labels,
+        default=default_ul,
+        key="setup_underlyings",
     )
+
+    # ── Custom ticker input ───────────────────────────────────────────────
+    with st.expander("➕ Add a custom ticker (not in the list above)"):
+        st.caption("Enter any valid yfinance symbol, e.g. UBER, 2222.SR, BTC-USD")
+        cc1, cc2, cc3 = st.columns([2, 2, 1])
+        with cc1:
+            custom_sym = st.text_input("yfinance symbol", placeholder="e.g. UBER",
+                                        key="custom_sym_input").strip().upper()
+        with cc2:
+            custom_name = st.text_input("Display name", placeholder="e.g. Uber",
+                                         key="custom_name_input").strip()
+        with cc3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Add", key="add_custom_btn"):
+                if custom_sym and custom_name:
+                    ct = dict(st.session_state.get("custom_tickers", {}))
+                    ct[custom_sym] = custom_name
+                    st.session_state["custom_tickers"] = ct
+                    # Auto-select the new ticker
+                    new_lbl = f"{custom_name} — {custom_sym} (custom)"
+                    current = list(st.session_state.get("setup_underlyings", default_ul))
+                    if new_lbl not in current:
+                        current.append(new_lbl)
+                    st.session_state["setup_ul_default"] = current
+                    st.rerun()
+                else:
+                    st.warning("Enter both a symbol and a display name.")
 
     st.divider()
 
@@ -222,10 +310,21 @@ if st.session_state["page"] == "setup":
     else:
         if st.button("✅ Confirm & Load Dashboard", type="primary",
                      use_container_width=True):
-            selected_tickers = {
-                UNDERLYING_OPTIONS[lbl]: lbl.split(" — ")[0]
-                for lbl in selected_labels[:5]
-            }
+            custom_tickers = st.session_state.get("custom_tickers", {})
+            # Build reverse map including custom tickers
+            all_options = dict(UNDERLYING_OPTIONS)
+            all_options.update({sym: disp for sym, disp in custom_tickers.items()})
+            _all_label_to_sym = {k: v for k, v in UNDERLYING_OPTIONS.items()}
+            _all_label_to_sym.update({
+                f"{disp} — {sym} (custom)": sym
+                for sym, disp in custom_tickers.items()
+            })
+            selected_tickers = {}
+            for lbl in selected_labels[:5]:
+                sym  = _all_label_to_sym.get(lbl)
+                disp = lbl.split(" — ")[0]
+                if sym:
+                    selected_tickers[sym] = disp
             terms = NoteTerms(
                 name                  = base.name if loaded_terms else "Custom Note",
                 maturity              = float(maturity),
@@ -249,6 +348,7 @@ if st.session_state["page"] == "setup":
             st.session_state["seed"]             = int(seed)
             st.session_state["results"]          = None
             st.session_state["page"]             = "dashboard"
+            st.session_state["setup_ul_default"] = None   # clear for next reconfigure
             st.rerun()
 
 # ==========================================================================
@@ -297,6 +397,15 @@ elif st.session_state["page"] == "dashboard":
     )
 
     with st.expander("📖 Note Structure Summary", expanded=False):
+        # Underlyings table
+        st.markdown("**Underlyings**")
+        ul_df = pd.DataFrame([
+            {"Display Name": disp, "yfinance Symbol": sym}
+            for sym, disp in selected_tickers.items()
+        ])
+        st.dataframe(ul_df, use_container_width=True, hide_index=True)
+
+        st.divider()
         c1, c2, c3 = st.columns(3)
         c1.metric("Maturity", f"{terms.maturity}Y")
         c1.metric("Observations", f"{terms.n_obs}")
@@ -353,24 +462,32 @@ elif st.session_state["page"] == "dashboard":
 
             note_results = price_note(perf_paths, terms, seed=seed + 1)
 
+            # Store S0 values separately — HestonParams objects can cause
+            # serialization issues in session state across reruns
+            s0_values = [p.S0 for p in cal_result.params]
+
             st.session_state["results"] = {
                 **note_results,
                 "worst_of_paths": wof_paths,
                 "sim_prices":     sim_prices,
                 "asset_names":    list(selected_tickers.values()),
+                "s0_values":      s0_values,
                 "params":         cal_result.params,
                 "corr_SS":        cal_result.corr_SS,
                 "sim_results":    sim_results,
                 "t_dof":          cal_result.t_dof,
                 "terms_snapshot": terms.to_dict(),
             }
+            # Also store asset_names separately as a safety fallback
+            st.session_state["last_asset_names"] = list(selected_tickers.values())
             st.session_state["path_num"] = 0
             st.rerun()
 
     # ── Results ───────────────────────────────────────────────────────────
     if st.session_state["results"] is not None:
         R           = st.session_state["results"]
-        asset_names = R["asset_names"]
+        # Fallback: if asset_names is empty after rerun use the separately stored copy
+        asset_names = R.get("asset_names") or                       st.session_state.get("last_asset_names") or                       list(selected_tickers.values())
         wof_paths   = R["worst_of_paths"]
         sim_prices  = R["sim_prices"]
         N           = wof_paths.shape[1] - 1
@@ -406,10 +523,16 @@ elif st.session_state["page"] == "dashboard":
         ])
 
         with tab1:
-            st.subheader("Maturity Payoff vs Simulated Outcomes")
+            st.subheader("IRR Distribution — All Simulated Paths")
+            coupon_pa = run_terms.coupon_rate * run_terms.n_obs / run_terms.maturity
             st.plotly_chart(
-                build_payoff_distribution(wof_paths, R["autocall_events"],
-                                          run_terms.knock_in_barrier, N, tr),
+                build_irr_distribution(
+                    R["annualized_returns"],
+                    R["autocall_events"],
+                    R["expected_irr"],
+                    coupon_pa,
+                    tr,
+                ),
                 use_container_width=True,
             )
             if R["prob_knock_in_total"] > 0:
@@ -418,16 +541,19 @@ elif st.session_state["page"] == "dashboard":
 
         with tab2:
             st.subheader("Simulated Price Path Fan Charts")
+            # Worst-of fan first (most relevant for note pricing)
+            st.markdown("#### Worst-of Basket Performance")
+            st.plotly_chart(
+                build_wof_fan(wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr),
+                use_container_width=True,
+            )
+            st.markdown("#### Individual Underlying Paths")
+            # Per-asset fan charts
             for i, name in enumerate(asset_names):
                 st.plotly_chart(
                     build_fan_chart(sim_prices[:, :, i], name, t_grid, obs_pairs, tr),
                     use_container_width=True,
                 )
-            st.markdown("### Worst-of Performance")
-            st.plotly_chart(
-                build_wof_fan(wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr),
-                use_container_width=True,
-            )
 
         with tab3:
             st.subheader("Single Path Explorer")
@@ -451,10 +577,17 @@ elif st.session_state["page"] == "dashboard":
                 build_path_price_chart(path_df, pn, obs_steps_i, obs_labels, tr),
                 use_container_width=True,
             )
-            autocall_q = int(R["autocall_events"][pn])
+            autocall_q    = int(R["autocall_events"][pn])
+            # asset_paths: (N+1, n_assets) performance fractions for this path
+            # Use s0_values (serialization-safe) instead of params objects
+            s0_arr        = np.array(R.get("s0_values") or [p.S0 for p in R["params"]])
+            asset_perf_pn = sim_prices[pn] / s0_arr[np.newaxis, :]
             st.plotly_chart(
-                build_path_wof_chart(wof_paths[pn], autocall_q, obs_steps_i, obs_labels,
-                                     run_terms.knock_in_barrier, pn, tr),
+                build_path_wof_chart(
+                    wof_paths[pn], autocall_q, obs_steps_i, obs_labels,
+                    run_terms.knock_in_barrier, pn, tr,
+                    asset_paths=asset_perf_pn, asset_names=asset_names,
+                ),
                 use_container_width=True,
             )
 
@@ -549,7 +682,47 @@ elif st.session_state["page"] == "dashboard":
             bt_end      = pd.Timestamp(str(bt["Issue Date"].max()))
             st.plotly_chart(build_historical_prices(hist_prices, bt_start, bt_end, tr),
                             use_container_width=True)
-            st.plotly_chart(build_wof_rolling(hist_prices, terms.knock_in_barrier, tr),
-                            use_container_width=True)
         except Exception:
             pass
+
+        # ── Historical worst-of path explorer ─────────────────────────
+        st.subheader("📅 Historical Path Explorer")
+        st.caption("Select any issue date from the backtest to see the actual "
+                   "per-asset performance and worst-of path over the note's life.")
+
+        issue_dates = sorted(bt["Issue Date"].unique())
+        selected_issue = st.selectbox(
+            "Issue date",
+            issue_dates,
+            index=0,
+            format_func=lambda d: str(d),
+            key="bt_issue_selector",
+        )
+        if selected_issue is not None:
+            row = bt[bt["Issue Date"] == selected_issue].iloc[0]
+            st.markdown(
+                f"**Outcome:** {row['Outcome']} &nbsp;|&nbsp; "
+                f"**IRR:** {row['IRR']:.2%} &nbsp;|&nbsp; "
+                f"**Worst asset:** {row['Worst Asset']} "
+                f"({row['Worst Final Perf']:.1%})"
+            )
+            try:
+                hist_prices = _load_prices(tickers_tuple)
+                maturity_days   = round(terms.maturity * 252)
+                obs_day_offsets = [round(t / terms.maturity * maturity_days)
+                                   for t in terms.obs_times()]
+                st.plotly_chart(
+                    build_historical_wof_path(
+                        hist_prices,
+                        issue_date        = pd.Timestamp(str(selected_issue)),
+                        maturity_days     = maturity_days,
+                        obs_day_offsets   = obs_day_offsets,
+                        knock_in_barrier  = terms.knock_in_barrier,
+                        autocall_barrier  = terms.autocall_barrier,
+                        call_quarter      = int(row["Call Quarter"]),
+                        tr                = tr,
+                    ),
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.error(f"Could not build path: {e}")

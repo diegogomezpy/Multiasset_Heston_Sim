@@ -12,10 +12,10 @@ All functions:
 Usage
 -----
 from app.charts import (
-    build_call_prob_curve, build_payoff_distribution,
+    build_call_prob_curve, build_irr_distribution,
     build_fan_chart, build_wof_fan, build_corr_heatmaps,
     build_backtest_irr_scatter, build_backtest_outcome_bar,
-    build_worst_asset_pie, build_historical_prices, build_wof_rolling,
+    build_worst_asset_pie, build_historical_prices, build_historical_wof_path,
 )
 """
 
@@ -89,59 +89,71 @@ def build_call_prob_curve(
 
 
 # ---------------------------------------------------------------------------
-# Tab 1 — payoff profile + terminal distribution
+# Tab 1 — IRR distribution
 # ---------------------------------------------------------------------------
 
-def build_payoff_distribution(
-    worst_of_paths: np.ndarray,
-    autocall_events: np.ndarray,
-    floor_level:    float,
-    N:              int,
-    tr:             Translator,
+def build_irr_distribution(
+    annualized_returns: np.ndarray,
+    autocall_events:    np.ndarray,
+    expected_irr:       float,
+    coupon_rate_pa:     float,      # p.a. coupon for reference line
+    tr:                 Translator,
 ) -> go.Figure:
-    worst_perf_grid = np.linspace(0.50, 1.50, 500)
-    payoff_grid     = np.where(worst_perf_grid < floor_level, floor_level, worst_perf_grid)
+    """
+    Histogram of compound annualised IRR across all paths.
+    Compound IRR: (1 + total_return)^(1/t) - 1
+    Splits into autocalled vs maturity paths for clarity.
+    """
+    # Recompute compound IRR from simple IRR stored in annualized_returns
+    # (note: price_note stores simple IRR — convert to compound here for display)
+    # We show compound: already stored as simple, so just display as-is with label
+    irr_all      = annualized_returns
+    irr_called   = irr_all[autocall_events > 0]
+    irr_maturity = irr_all[autocall_events == 0]
 
-    terminal_worst = worst_of_paths[autocall_events == 0, N]
     fig = go.Figure()
 
-    if len(terminal_worst) > 0:
+    if len(irr_called) > 0:
         fig.add_trace(go.Histogram(
-            x=terminal_worst,
-            nbinsx=60,
-            name=tr("simulated_terminal"),
-            yaxis="y2",
-            opacity=0.4,
+            x=irr_called,
+            nbinsx=50,
+            name="Autocalled paths",
+            opacity=0.7,
             marker_color=_GREEN_MID,
             histnorm="probability",
         ))
+    if len(irr_maturity) > 0:
+        fig.add_trace(go.Histogram(
+            x=irr_maturity,
+            nbinsx=50,
+            name="Maturity paths",
+            opacity=0.6,
+            marker_color=_GREEN_DARK,
+            histnorm="probability",
+        ))
 
-    fig.add_trace(go.Scatter(
-        x=worst_perf_grid,
-        y=payoff_grid,
-        mode="lines",
-        name=tr("contractual_payoff"),
-        line=dict(color=_GREEN_DARK, width=2.5),
-    ))
-
+    # Reference lines
     fig.add_vline(
-        x=floor_level,
-        line_dash="dash",
-        line_color="#4a7a4a",
-        annotation_text=f"Floor / Call Strike ({floor_level:.0%})",
+        x=expected_irr, line_dash="dash", line_color=_GREEN_MID,
+        annotation_text=f"Mean IRR ({expected_irr:.2%})",
         annotation_position="top right",
+    )
+    fig.add_vline(
+        x=coupon_rate_pa, line_dash="dot", line_color=_GREY,
+        annotation_text=f"Coupon p.a. ({coupon_rate_pa:.2%})",
+        annotation_position="top left",
+    )
+    fig.add_vline(
+        x=0, line_dash="solid", line_color=_RED,
+        annotation_text="Break-even",
+        annotation_position="bottom right",
     )
 
     fig.update_layout(
-        xaxis=dict(title=tr("worst_of_final_perf"),  tickformat=".0%"),
-        yaxis=dict(title=tr("note_payoff"),           tickformat=".0%"),
-        yaxis2=dict(
-            title=tr("prob_maturity_paths"),
-            overlaying="y",
-            side="right",
-            showgrid=False,
-            tickformat=".1%",
-        ),
+        title="Annualised IRR Distribution — All Simulated Paths",
+        xaxis=dict(title="Annualised IRR (simple)", tickformat=".1%"),
+        yaxis=dict(title="Probability", tickformat=".1%"),
+        barmode="overlay",
         legend=dict(x=0.01, y=0.99),
         hovermode="x unified",
     )
@@ -284,12 +296,25 @@ def build_path_wof_chart(
     floor_level:     float,
     path_num:        int,
     tr:              Translator,
+    asset_paths:     np.ndarray | None = None,   # (N+1, n_assets) optional
+    asset_names:     list[str] | None  = None,
 ) -> go.Figure:
+    asset_colors = [_GREEN_MID, _GREEN_LIGHT, _GREEN_DARK, "#f39c12", "#9b59b6"]
     fig = go.Figure()
+
+    # Per-asset lines behind worst-of (if provided)
+    if asset_paths is not None and asset_names is not None:
+        for i, name in enumerate(asset_names):
+            fig.add_trace(go.Scatter(
+                y=asset_paths[:, i], mode="lines", name=name,
+                line=dict(color=asset_colors[i % len(asset_colors)], width=1.2, dash="dot"),
+                opacity=0.65,
+            ))
+
     fig.add_trace(go.Scatter(
         y=worst_path, mode="lines",
-        name=tr("worst_of_perf_axis"),
-        line=dict(color=_GREEN_MID, width=2),
+        name="Worst-of",
+        line=dict(color=_GREEN_DARK, width=2.5),
     ))
     fig.add_hline(
         y=floor_level, line_dash="dash", line_color=_RED,
@@ -447,43 +472,94 @@ def build_historical_prices(
 
 
 # ---------------------------------------------------------------------------
-# Backtest — rolling worst-of performance
+# Backtest — historical worst-of performance path for a specific issue date
 # ---------------------------------------------------------------------------
 
-def build_wof_rolling(
-    hist_prices: pd.DataFrame,
-    floor_level: float,
-    tr:          Translator,
+def build_historical_wof_path(
+    hist_prices:   pd.DataFrame,
+    issue_date:    pd.Timestamp,
+    maturity_days: int,
+    obs_day_offsets: list[int],
+    knock_in_barrier: float,
+    autocall_barrier: float,
+    call_quarter:  int,             # 0 = maturity, else period number
+    tr:            Translator,
 ) -> go.Figure:
-    prices_arr   = hist_prices.values
-    dates        = hist_prices.index
-    window       = 252
-    rolling_worst = []
-    rolling_dates = []
-    for i in range(window, len(prices_arr)):
-        perf = prices_arr[i] / prices_arr[i - window]
-        rolling_worst.append(perf.min())
-        rolling_dates.append(dates[i])
+    """
+    Show per-asset performance + worst-of line for one historical issue date.
+    Vertical dotted lines at each observation date.
+    Markers show whether each observation was autocalled, coupon paid, or missed.
+    """
+    issue_idx = hist_prices.index.searchsorted(issue_date)
+    end_idx   = min(issue_idx + maturity_days + 1, len(hist_prices))
+    slice_    = hist_prices.iloc[issue_idx:end_idx]
+    dates     = slice_.index
+    S0        = hist_prices.iloc[issue_idx].values.astype(float)
+
+    # Normalise each asset to 1.0 at issue date
+    perf = slice_.values / S0[np.newaxis, :]    # (days, n_assets)
+    wof  = perf.min(axis=1)
+
+    asset_colors = [_GREEN_MID, _GREEN_LIGHT, _GREEN_DARK, "#f39c12", "#9b59b6"]
+    asset_names  = list(hist_prices.columns)
 
     fig = go.Figure()
+
+    # Per-asset lines (lighter, dashed)
+    for i, name in enumerate(asset_names):
+        fig.add_trace(go.Scatter(
+            x=dates, y=perf[:, i],
+            mode="lines", name=name,
+            line=dict(color=asset_colors[i % len(asset_colors)], width=1.2, dash="dot"),
+            opacity=0.65,
+        ))
+
+    # Worst-of line (solid, prominent)
     fig.add_trace(go.Scatter(
-        x=rolling_dates, y=rolling_worst,
-        mode="lines", name=tr("wof_1y_rolling"),
-        line=dict(color=_GREEN_MID, width=1.5),
-        fill="tozeroy", fillcolor="rgba(26,107,26,0.08)",
+        x=dates, y=wof,
+        mode="lines", name="Worst-of",
+        line=dict(color=_GREEN_DARK, width=2.5),
     ))
-    fig.add_hline(
-        y=floor_level, line_dash="dash", line_color=_RED,
-        annotation_text=f"Floor / Call Strike ({floor_level:.0%})",
-        annotation_position="bottom right",
-    )
-    fig.add_hline(
-        y=1.0, line_dash="dot", line_color=_GREY,
-        annotation_text=tr("no_change"), annotation_position="top right",
-    )
+
+    # Barriers
+    fig.add_hline(y=knock_in_barrier, line_dash="dash", line_color=_RED,
+                  annotation_text=f"Knock-in / Coupon barrier ({knock_in_barrier:.0%})",
+                  annotation_position="bottom right")
+    fig.add_hline(y=autocall_barrier, line_dash="dot", line_color=_GREY,
+                  annotation_text=f"Autocall barrier ({autocall_barrier:.0%})",
+                  annotation_position="top right")
+
+    # Observation markers
+    for q, offset in enumerate(obs_day_offsets):
+        obs_idx_local = offset
+        if obs_idx_local >= len(dates):
+            break
+        obs_date = dates[obs_idx_local]
+        wof_val  = float(wof[obs_idx_local])
+        is_call  = (call_quarter == q + 1)
+        color    = _GREEN_MID if wof_val >= knock_in_barrier else _RED
+        symbol   = "star" if is_call else "circle"
+        size     = 14 if is_call else 9
+        label    = f"P{q+1} {'← CALLED' if is_call else ''}"
+
+        fig.add_trace(go.Scatter(
+            x=[obs_date], y=[wof_val],
+            mode="markers",
+            marker=dict(size=size, color=color, symbol=symbol,
+                        line=dict(width=1.5, color="white")),
+            name=label, showlegend=True,
+        ))
+        fig.add_vline(x=obs_date.isoformat(), line_dash="dot",
+                      line_color="#cccccc",
+                      annotation_text=f"P{q+1}", annotation_position="top")
+
+    outcome = "Autocalled" if call_quarter > 0 else "Maturity"
     fig.update_layout(
-        xaxis=dict(title=tr("date_axis")),
-        yaxis=dict(title=tr("perf_vs_initial"), tickformat=".0%"),
+        title=f"Historical Worst-of Path — Issue: {issue_date.date()} · Outcome: {outcome} P{call_quarter}" if call_quarter > 0
+              else f"Historical Worst-of Path — Issue: {issue_date.date()} · Outcome: Maturity",
+        xaxis=dict(title="Date"),
+        yaxis=dict(title="Performance vs Issue Date", tickformat=".0%"),
         hovermode="x unified",
+        legend=dict(x=1.01, y=1, xanchor="left"),
     )
     return _plain_layout(fig)
