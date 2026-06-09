@@ -1,8 +1,8 @@
 {
   "name": "HSBC XS3376563584 \u2014 24M Monthly Phoenix",
   "maturity": 2.0,
-  "n_obs": 24,
-  "coupon_rate": 0.008333,
+  "payment_freq": "monthly",
+  "coupon_pa": 0.1,
   "coupon_barrier": 0.55,
   "autocall_barrier": 1.0,
   "autocall_start_period": 4,
@@ -14,8 +14,9 @@
   "final_basket": "worst_of",
   "call_steepness": 100.0,
   "tickers": {
-    "GS": "GS",
-    "JPM": "JPM",
-    "MS": "MS"
-  }
+    "GS": "Goldman Sachs",
+    "JPM": "JPMorgan",
+    "MS": "Morgan Stanley"
+  },
+  "issue_date": "2026-06-09"
 }

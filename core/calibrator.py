@@ -208,23 +208,25 @@ class HestonCalibrator:
 
     def __init__(
         self,
-        tickers:    dict                    = {},
-        years:      float                   = 5.0,
-        rv_window:  int                     = 21,
-        mle_refine: bool                    = False,
-        prices_df:  Optional[pd.DataFrame]  = None,
-        end_date:   Optional[str]           = None,
-        ssl_verify: bool                    = True,
-        csv_files:  Optional[dict]          = None,
+        tickers:     dict                    = {},
+        years:       float                   = 5.0,
+        rv_window:   int                     = 21,
+        mle_refine:  bool                    = False,
+        prices_df:   Optional[pd.DataFrame]  = None,
+        end_date:    Optional[str]           = None,
+        ssl_verify:  bool                    = True,
+        csv_files:   Optional[dict]          = None,
+        calib_years: Optional[float]         = None,
     ):
-        self.tickers    = tickers
-        self.years      = years
-        self.rv_window  = rv_window
-        self.mle_refine = mle_refine
-        self.prices_df  = prices_df
-        self.end_date   = end_date
-        self.ssl_verify = ssl_verify
-        self.csv_files  = csv_files
+        self.tickers     = tickers
+        self.years       = years
+        self.rv_window   = rv_window
+        self.mle_refine  = mle_refine
+        self.prices_df   = prices_df
+        self.end_date    = end_date
+        self.ssl_verify  = ssl_verify
+        self.csv_files   = csv_files
+        self.calib_years = calib_years
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -242,12 +244,26 @@ class HestonCalibrator:
         prices = self._get_prices()
         names  = list(prices.columns)
         n      = len(names)
-        print(f"\n[Calibrator] Assets     : {names}")
-        print(f"[Calibrator] Date range : {prices.index[0].date()} → {prices.index[-1].date()}")
-        print(f"[Calibrator] Obs (days) : {len(prices)}")
 
-        # Step 2: Compute returns
-        lr1, lr2 = self._compute_returns(prices)
+        # Optional: slice to recent calib_years for parameter estimation.
+        # Useful when prices_df covers a long history (e.g. 20 years for backtesting)
+        # but you want Heston params calibrated on recent market conditions only.
+        calib_prices = prices
+        if self.calib_years is not None:
+            cutoff = prices.index[-1] - pd.DateOffset(years=self.calib_years)
+            calib_prices = prices[prices.index >= cutoff]
+            if len(calib_prices) < 60:
+                print(f"[Calibrator] WARNING: calib_years={self.calib_years} gives only "
+                      f"{len(calib_prices)} obs after slicing — using full history instead.")
+                calib_prices = prices
+
+        print(f"\n[Calibrator] Assets     : {names}")
+        print(f"[Calibrator] Full data  : {prices.index[0].date()} → {prices.index[-1].date()} ({len(prices)} days)")
+        if calib_prices is not prices:
+            print(f"[Calibrator] Calib window: {calib_prices.index[0].date()} → {calib_prices.index[-1].date()} ({len(calib_prices)} days, last {self.calib_years}Y)")
+
+        # Step 2: Compute returns (on calibration window only)
+        lr1, lr2 = self._compute_returns(calib_prices)
         # lr1: 1-day log returns  (n_obs-1, n)  — used for RV and rho
         # lr2: 2-day log returns  (n_obs-2, n)  — used for corr_SS
 
@@ -257,7 +273,7 @@ class HestonCalibrator:
         # Step 4: MoM calibration per asset
         params_list = []
         for i, name in enumerate(names):
-            S0  = float(prices[name].iloc[-1])
+            S0  = float(prices[name].iloc[-1])   # always latest price from full history
             p   = self._mom_calibrate(
                 name   = name,
                 S0     = S0,
@@ -290,10 +306,11 @@ class HestonCalibrator:
               f"(per-asset fits: {[f'{v:.1f}' for v in dof_estimates]})")
 
         diagnostics = {
-            "prices":  prices,
-            "lr1":     pd.DataFrame(lr1, columns=names),
-            "lr2":     pd.DataFrame(lr2, columns=names),
-            "rv":      pd.DataFrame(rv_df, columns=names),
+            "prices":       prices,        # full history
+            "calib_prices": calib_prices,  # calibration window (may equal prices)
+            "lr1":          pd.DataFrame(lr1, columns=names),
+            "lr2":          pd.DataFrame(lr2, columns=names),
+            "rv":           pd.DataFrame(rv_df, columns=names),
         }
 
         result = CalibrationResult(

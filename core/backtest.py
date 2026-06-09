@@ -18,15 +18,34 @@ def run_backtest(
     terms:            NoteTerms,
     issue_freq_weeks: int = 2,
     seed:             int = 42,
+    bt_start:         pd.Timestamp | None = None,
+    bt_end:           pd.Timestamp | None = None,
 ) -> tuple[pd.DataFrame, dict]:
+    """
+    bt_start / bt_end : optional date range for issue dates.
+        If provided, only issue dates within [bt_start, bt_end] are tested.
+        The prices DataFrame must still cover the full maturity window around
+        each issue date, so pass the full price history here.
+    """
 
     rng = np.random.default_rng(seed)
 
     maturity_days   = round(terms.maturity * 252)
     obs_day_offsets = [round(t / terms.maturity * maturity_days) for t in terms.obs_times()]
 
+    # Natural bounds: need maturity_days of history before and after each issue date
     first_valid = prices.index[maturity_days]
     last_valid  = prices.index[-maturity_days]
+
+    # Apply optional user-specified date range on top of natural bounds
+    if bt_start is not None:
+        first_valid = max(first_valid, bt_start)
+    if bt_end is not None:
+        last_valid  = min(last_valid, bt_end)
+
+    if first_valid > last_valid:
+        return pd.DataFrame(), {}
+
     sampled     = pd.date_range(start=first_valid, end=last_valid,
                                 freq=f"{issue_freq_weeks}W")
 
@@ -95,9 +114,11 @@ def run_backtest(
             knock_in    = worst_final < terms.knock_in_barrier
             final_val   = float(_basket(perf_2d, terms.final_basket)[0])
             if knock_in:
-                principal = worst_final   # cash-equivalent physical delivery
+                principal = worst_final          # cash-equivalent physical delivery
             else:
-                principal = max(terms.principal_protection, final_val)
+                principal = terms.principal_protection   # no KI → return floor (100%)
+                # Note: no upside participation in either worst-of or best-of Phoenix notes.
+                # BBVA best-of final basket: cases A and B both pay exactly 100%.
             t_held = terms.maturity
 
         payout = principal + total_coupons_paid

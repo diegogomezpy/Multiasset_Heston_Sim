@@ -39,7 +39,7 @@ DEFAULT_CSV_FILES: dict[str, str] = {
 def load_prices(
     source:     str                     = "yfinance",
     tickers:    dict[str, str] | None   = None,
-    years:      float                   = 5.0,
+    years:      float | None            = 5.0,
     end_date:   str | None              = None,
     ssl_verify: bool                    = True,
     csv_files:  dict[str, str] | None   = None,
@@ -60,8 +60,9 @@ def load_prices(
         Only used when source="yfinance".
         Defaults to DEFAULT_TICKERS (SPX / SX5E / SMI).
 
-    years : float
+    years : float or None
         How many years of history to pull.
+        Pass None to fetch the maximum available history for each ticker.
         Only used when source="yfinance". Default 5.
 
     end_date : str or None
@@ -124,11 +125,15 @@ def _from_yfinance(
         )
 
     end   = pd.Timestamp(end_date) if end_date else pd.Timestamp.today()
-    start = end - pd.DateOffset(years=years)
+    start = None if years is None else end - pd.DateOffset(years=years)
 
     ticker_symbols = list(tickers.keys())
-    print(f"[loader] Pulling {ticker_symbols} from yfinance "
-          f"({start.date()} → {end.date()}) …")
+    if start is not None:
+        print(f"[loader] Pulling {ticker_symbols} from yfinance "
+              f"({start.date()} → {end.date()}) …")
+    else:
+        print(f"[loader] Pulling {ticker_symbols} from yfinance "
+              f"(max history → {end.date()}) …")
 
     session = None
     if not ssl_verify:
@@ -140,12 +145,21 @@ def _from_yfinance(
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        kwargs = dict(
-            start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
-            auto_adjust=True,
-            progress=False,
-        )
+        if start is not None:
+            # Bounded window: explicit start → end
+            kwargs = dict(
+                start=start.strftime("%Y-%m-%d"),
+                end=end.strftime("%Y-%m-%d"),
+                auto_adjust=True,
+                progress=False,
+            )
+        else:
+            # Max history: use period="max" — omitting start only returns 30 days
+            kwargs = dict(
+                period="max",
+                auto_adjust=True,
+                progress=False,
+            )
         if session:
             kwargs["session"] = session
         raw = yf.download(ticker_symbols, **kwargs)

@@ -58,79 +58,32 @@ def _basket(perf: np.ndarray, kind: BasketType) -> np.ndarray:
 # Product specification
 # ---------------------------------------------------------------------------
 
+# Frequency string → periods per year
+_FREQ_TO_PERIODS: dict[str, int] = {
+    "monthly":     12,
+    "quarterly":    4,
+    "semi-annual":  2,
+    "annual":       1,
+}
+
+
 @dataclass
 class NoteTerms:
     """
     Full specification of a Phoenix Memory Autocallable note.
 
-    Parameters
-    ----------
-    maturity : float
-        Note tenor in years. Default 1.0.
+    Human-readable fields (set these in JSON / UI):
+      maturity        : tenor in years (e.g. 2.0)
+      payment_freq    : "monthly" | "quarterly" | "semi-annual" | "annual"
+      coupon_pa       : annualised coupon rate as a fraction (e.g. 0.10 = 10% p.a.)
 
-    n_obs : int
-        Total number of observation periods. Default 4 (quarterly on 1Y).
-        Combined with maturity determines observation spacing:
-        obs_times = [maturity * i / n_obs for i in 1..n_obs]
-
-    coupon_rate : float
-        Coupon paid per period when coupon barrier is met (as fraction).
-        e.g. 0.008333 = 0.8333% per month (10% p.a. / 12).
-        Default 0.025 (2.5% per quarter = 10% p.a.).
-
-    coupon_barrier : float
-        Worst-of (or selected basket) must be at or above this level
-        for the coupon to be paid. Default 0.55.
-
-    autocall_barrier : float
-        Worst-of must be at or above this for autocall. Default 1.00.
-
-    autocall_start_period : int
-        First observation period at which autocall is possible (1-indexed).
-        Periods before this are coupon-only. Default 1.
-        e.g. HSBC note: autocall_start_period=4 (first 3 months coupon-only).
-
-    knock_in_barrier : float
-        European knock-in: checked only at final valuation.
-        If worst-of final < knock_in_barrier, knock-in event occurs.
-        Default 0.55. Set to 0.0 to disable.
-
-    principal_protection : float
-        Floor on maturity redemption if NO knock-in. Default 1.0 (100%).
-        Set to 0.95 for 95% capital protection.
-        If knock-in occurs, cash-equivalent physical delivery applies instead.
-
-    memory : bool
-        If True, missed coupons accumulate and are paid when barrier
-        is next triggered (Phoenix Memory mechanic). Default True.
-
-    coupon_basket : BasketType
-        Basket type used for coupon barrier check. Default "worst_of".
-
-    autocall_basket : BasketType
-        Basket type used for autocall trigger check. Default "worst_of".
-
-    final_basket : BasketType
-        Basket type used for final redemption condition check. Default "worst_of".
-        Set to "best_of" to replicate BBVA note final condition.
-
-    call_steepness : float
-        Sigmoid sharpness for discretionary issuer call model.
-        Use a large value (e.g. 100) for hard/automatic autocall trigger.
-        Default 100 (effectively automatic).
-
-    name : str
-        Human-readable note name. Default "Phoenix Memory Note".
-
-    tickers : dict[str, str]
-        Mapping from yfinance ticker symbol to display name.
-        e.g. {"^GSPC": "SPX", "^STOXX50E": "SX5E"}.
-        Stored in the config so the full note is self-contained in one JSON file.
-        Default is empty dict (app falls back to its own default selection).
+    Derived (computed automatically):
+      n_obs           : maturity * periods_per_year
+      coupon_rate     : coupon_pa / periods_per_year  (per-period rate)
     """
     maturity:               float       = 1.0
-    n_obs:                  int         = 4
-    coupon_rate:            float       = 0.025
+    payment_freq:           str         = "quarterly"   # monthly/quarterly/semi-annual/annual
+    coupon_pa:              float       = 0.10          # annualised coupon rate
     coupon_barrier:         float       = 0.55
     autocall_barrier:       float       = 1.00
     autocall_start_period:  int         = 1
@@ -143,13 +96,36 @@ class NoteTerms:
     call_steepness:         float       = 100.0
     name:                   str         = "Phoenix Memory Note"
     tickers:                dict        = None
+    issue_date:             str         = None   # "YYYY-MM-DD" — enables Current Performance tab
 
     def __post_init__(self):
         if self.tickers is None:
             object.__setattr__(self, "tickers", {})
+        if self.payment_freq not in _FREQ_TO_PERIODS:
+            raise ValueError(
+                f"payment_freq must be one of {list(_FREQ_TO_PERIODS)}; got '{self.payment_freq}'"
+            )
 
     # ------------------------------------------------------------------
-    # Derived helpers
+    # Derived properties
+    # ------------------------------------------------------------------
+
+    @property
+    def periods_per_year(self) -> int:
+        return _FREQ_TO_PERIODS[self.payment_freq]
+
+    @property
+    def n_obs(self) -> int:
+        """Total observation periods = maturity × periods per year."""
+        return round(self.maturity * self.periods_per_year)
+
+    @property
+    def coupon_rate(self) -> float:
+        """Per-period coupon rate = coupon_pa / periods_per_year."""
+        return self.coupon_pa / self.periods_per_year
+
+    # ------------------------------------------------------------------
+    # Schedule helpers
     # ------------------------------------------------------------------
 
     def obs_times(self) -> list[float]:
@@ -161,24 +137,20 @@ class NoteTerms:
         return [round(t / self.maturity * N) for t in self.obs_times()]
 
     def autocall_prob(self, basket_val: np.ndarray) -> np.ndarray:
-        """
-        Vectorized sigmoid probability the issuer calls.
-        Hard trigger at high steepness; probabilistic at low steepness.
-        Only callable when basket_val >= autocall_barrier.
-        """
+        """Sigmoid autocall probability. Hard trigger at high steepness."""
         p = 1.0 / (1.0 + np.exp(-self.call_steepness * (basket_val - self.autocall_barrier)))
         return np.where(basket_val < self.autocall_barrier, 0.0, p)
 
     # ------------------------------------------------------------------
-    # Serialisation
+    # Serialisation — stores human-readable fields only
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict:
         return {
             "name":                   self.name,
             "maturity":               self.maturity,
-            "n_obs":                  self.n_obs,
-            "coupon_rate":            self.coupon_rate,
+            "payment_freq":           self.payment_freq,
+            "coupon_pa":              self.coupon_pa,
             "coupon_barrier":         self.coupon_barrier,
             "autocall_barrier":       self.autocall_barrier,
             "autocall_start_period":  self.autocall_start_period,
@@ -190,10 +162,30 @@ class NoteTerms:
             "final_basket":           self.final_basket,
             "call_steepness":         self.call_steepness,
             "tickers":                self.tickers,
+            "issue_date":             self.issue_date,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "NoteTerms":
+        """
+        Load from dict. Accepts both new format (payment_freq + coupon_pa)
+        and old format (n_obs + coupon_rate) for backwards compatibility.
+        """
+        d = dict(d)  # don't mutate caller's dict
+
+        # ── Old-format migration ──────────────────────────────────────
+        if "n_obs" in d or "coupon_rate" in d:
+            # Infer payment_freq from maturity and n_obs
+            maturity = float(d.get("maturity", 1.0))
+            n_obs    = int(d.pop("n_obs", 4))
+            periods_py = round(n_obs / maturity)
+            # Find closest known frequency
+            freq = min(_FREQ_TO_PERIODS, key=lambda f: abs(_FREQ_TO_PERIODS[f] - periods_py))
+            d["payment_freq"] = freq
+            # Convert per-period rate to annualised
+            coupon_rate = float(d.pop("coupon_rate", 0.025))
+            d["coupon_pa"] = coupon_rate * _FREQ_TO_PERIODS[freq]
+
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
     @classmethod
@@ -341,19 +333,16 @@ def price_note(
 
     knock_in = worst_final < terms.knock_in_barrier   # (n_paths,)
 
-    # No knock-in: return principal_protection (e.g. 100%)
-    # Knock-in: cash-equivalent physical delivery = worst-of final / strike (= worst-of final perf)
+    # No knock-in: always return principal_protection (e.g. 100%).
+    # This is correct for both worst-of and best-of final basket notes:
+    #   - HSBC worst-of: no KI → 100% principal (no upside participation)
+    #   - BBVA best-of: no KI → 100% regardless of where best-of lands (cases A and B both = 100%)
+    # Knock-in: cash-equivalent physical delivery = worst-of final performance
     maturity_principal = np.where(
         knock_in,
-        worst_final,                         # cash equiv. of physical delivery
-        np.maximum(terms.principal_protection, final_basket_val)
-        if terms.final_basket != "worst_of"
-        else terms.principal_protection,     # worst-of: just return floor
+        worst_final,                       # cash equiv. of physical delivery
+        terms.principal_protection,        # no knock-in → return floor (100% for both note types)
     )
-
-    # For best-of final condition (BBVA): if best_of >= 1.0 OR no KI → 100%
-    # Already handled above: principal_protection=1.0 covers the no-KI case,
-    # and knock_in uses worst_of regardless of final_basket.
 
     # Combine
     principal = np.where(any_autocalled, autocall_principal, maturity_principal)
@@ -363,13 +352,6 @@ def price_note(
     # ------------------------------------------------------------------
     nominal_payoffs = principal + total_coupons
 
-    t_held = np.where(
-        any_autocalled,
-        np.array(obs_times)[first_call_idx] * any_autocalled +
-        terms.maturity * (~any_autocalled),
-        terms.maturity,
-    )
-    # Fix: t_held should be obs_times[first_call_idx] for called paths
     t_held_arr = np.where(
         any_autocalled,
         np.array(obs_times)[np.clip(first_call_idx, 0, n_obs - 1)],
