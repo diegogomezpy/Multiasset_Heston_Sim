@@ -142,11 +142,12 @@ def _load_prices(tickers_tuple, years=5.0):
 
 @st.cache_data
 def _run_backtest_cached(tickers_tuple, terms_json,
-                         bt_start_str=None, bt_end_str=None):
-    # Always pull max history for backtesting: the user-selected history_years
-    # controls Heston calibration only.  The backtest needs the full available
-    # price series to maximise the number of valid issue dates.
-    prices   = _load_prices(tickers_tuple, years=None)
+                         bt_start_str=None, bt_end_str=None,
+                         history_years=None):
+    # history_years=None → pull maximum available history (best for backtesting).
+    # Pass a float (e.g. 5.0) to limit to that window — useful when one underlying
+    # has a short history (e.g. PLTR IPO Sept 2020) and period='max' causes issues.
+    prices   = _load_prices(tickers_tuple, years=history_years)
     t        = NoteTerms.from_json(terms_json)
     bt_start = pd.Timestamp(bt_start_str) if bt_start_str else None
     bt_end   = pd.Timestamp(bt_end_str)   if bt_end_str   else None
@@ -800,10 +801,13 @@ elif st.session_state["page"] == "dashboard":
         st.header("📅 Historical Backtest")
         st.markdown("Evaluates this note on every valid issue date using actual realized prices.")
 
-        # ── Load full price history (max) for path explorer ───────────
+        # ── Load full price history for backtest path explorer ────────────
+        # Use the same history_years that the user selected — avoids pulling
+        # period='max' when an underlying (e.g. PLTR) has a short history and
+        # a max-history download returns fewer rows than the backtest needs.
         _history_years = st.session_state.get("history_years", 5.0)
         try:
-            _all_prices = _load_prices(tickers_tuple, years=None)
+            _all_prices = _load_prices(tickers_tuple, years=_history_years)
             _min_date   = _all_prices.index.min().date()
             _max_date   = _all_prices.index.max().date()
         except Exception:
@@ -862,6 +866,7 @@ elif st.session_state["page"] == "dashboard":
                     tickers_tuple, terms.to_json(),
                     bt_start_str=bt_start_str,
                     bt_end_str=bt_end_str,
+                    history_years=st.session_state.get("history_years", 5.0),
                 )
             except Exception as e:
                 st.error(f"Backtest failed: {e}")

@@ -14,9 +14,9 @@
   "final_basket": "best_of",
   "call_steepness": 100.0,
   "tickers": {
-    "NVDA": "NVDA",
-    "PLTR": "PLTR",
-    "TSLA": "TSLA"
+    "NVDA": "NVIDIA",
+    "PLTR": "Palantir",
+    "TSLA": "Tesla"
   },
   "issue_date": "2026-06-09"
 }
