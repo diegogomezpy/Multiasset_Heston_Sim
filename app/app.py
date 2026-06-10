@@ -145,9 +145,9 @@ UNDERLYING_LABELS  = list(UNDERLYING_OPTIONS.keys())
 
 # Logo URLs for all tickers.
 # Stocks/ETFs: parqet CDN (accepts yfinance symbols directly).
-# Indices: Clearbit CDN using the index provider's domain.
+# Indices: Google favicon service using the exchange/provider domain — reliable and free.
 _LOGO_BASE = "https://assets.parqet.com/logos/symbol/{sym}?format=png"
-_CB = "https://logo.clearbit.com/{domain}"
+_GF = "https://www.google.com/s2/favicons?sz=64&domain={domain}"
 TICKER_LOGOS: dict[str, str] = {
     **{sym: _LOGO_BASE.format(sym=sym) for sym in [
         # US Banks & Financials
@@ -166,26 +166,26 @@ TICKER_LOGOS: dict[str, str] = {
         # Crypto ETFs
         "IBIT", "FBTC",
     ]},
-    # Indices — use the exchange / index-provider logo via Clearbit
-    "^GSPC":     _CB.format(domain="spglobal.com"),
-    "^NDX":      _CB.format(domain="nasdaq.com"),
-    "^RUT":      _CB.format(domain="ftserussell.com"),
-    "^STOXX50E": _CB.format(domain="stoxx.com"),
-    "^GDAXI":    _CB.format(domain="deutsche-boerse.com"),
-    "^FTSE":     _CB.format(domain="ftserussell.com"),
-    "^FCHI":     _CB.format(domain="euronext.com"),
-    "^SSMI":     _CB.format(domain="six-group.com"),
-    "^IBEX":     _CB.format(domain="bolsademadrid.es"),
-    "FTSEMIB.MI":_CB.format(domain="borsaitaliana.it"),
-    "^N225":     _CB.format(domain="jpx.co.jp"),
-    "^HSI":      _CB.format(domain="hsi.com.hk"),
-    "^KS11":     _CB.format(domain="krx.co.kr"),
-    "^AXJO":     _CB.format(domain="asx.com.au"),
-    "^TWII":     _CB.format(domain="twse.com.tw"),
-    "^NSEI":     _CB.format(domain="nseindia.com"),
-    "^STI":      _CB.format(domain="sgx.com"),
-    "^BVSP":     _CB.format(domain="b3.com.br"),
-    "^MXX":      _CB.format(domain="bmv.com.mx"),
+    # Indices — exchange / index-provider favicon via Google
+    "^GSPC":      _GF.format(domain="spglobal.com"),
+    "^NDX":       _GF.format(domain="nasdaq.com"),
+    "^RUT":       _GF.format(domain="ftserussell.com"),
+    "^STOXX50E":  _GF.format(domain="stoxx.com"),
+    "^GDAXI":     _GF.format(domain="deutsche-boerse.com"),
+    "^FTSE":      _GF.format(domain="ftserussell.com"),
+    "^FCHI":      _GF.format(domain="euronext.com"),
+    "^SSMI":      _GF.format(domain="six-group.com"),
+    "^IBEX":      _GF.format(domain="bolsademadrid.es"),
+    "FTSEMIB.MI": _GF.format(domain="borsaitaliana.it"),
+    "^N225":      _GF.format(domain="jpx.co.jp"),
+    "^HSI":       _GF.format(domain="hsi.com.hk"),
+    "^KS11":      _GF.format(domain="krx.co.kr"),
+    "^AXJO":      _GF.format(domain="asx.com.au"),
+    "^TWII":      _GF.format(domain="twse.com.tw"),
+    "^NSEI":      _GF.format(domain="nseindia.com"),
+    "^STI":       _GF.format(domain="sgx.com"),
+    "^BVSP":      _GF.format(domain="b3.com.br"),
+    "^MXX":       _GF.format(domain="bmv.com.mx"),
 }
 _DISPLAY_TO_LABEL  = {k.split(" — ")[0]: k for k in UNDERLYING_OPTIONS.keys()}
 # Also map by yfinance symbol → label for JSON loading
@@ -372,10 +372,17 @@ if st.session_state["page"] == "setup":
         for _i, _lbl in enumerate(selected_labels[:5]):
             _sym = _lbl_to_sym.get(_lbl)
             _logo_url = TICKER_LOGOS.get(_sym) if _sym else None
+            _short = _lbl.split(" — ")[0]
             with logo_cols[_i]:
                 if _logo_url:
-                    st.image(_logo_url, width=48)
-                st.caption(_lbl.split(" — ")[0])
+                    # onerror hides the element if the URL fails instead of showing a broken icon
+                    st.markdown(
+                        f'<img src="{_logo_url}" width="48" height="48" '
+                        f'style="object-fit:contain;border-radius:4px;" '
+                        f'onerror="this.style.display=\'none\'">',
+                        unsafe_allow_html=True,
+                    )
+                st.caption(_short)
 
     st.divider()
 
