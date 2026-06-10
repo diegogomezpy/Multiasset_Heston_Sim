@@ -127,12 +127,9 @@ def run_backtest(
         "n_issues":      len(bt),
         "mean_irr":      float(bt["IRR"].mean()),
         "median_irr":    float(bt["IRR"].median()),
-        "prob_floor":    float(knock_in_mask.mean()),
         "prob_called":   float((bt["Call Quarter"] > 0).mean()),
         "prob_knock_in": float(knock_in_mask.mean()),
         "prob_maturity": float((bt["Call Quarter"] == 0).mean()),
-        **{f"prob_q{i}": float((bt["Call Quarter"] == i).mean())
-           for i in range(1, min(4, terms.n_obs + 1))},
     }
 
     return bt, summary

@@ -631,13 +631,11 @@ class HestonCalibrator:
                     or not (-1 < rho < 1)
                     or 2 * kappa * theta < xi ** 2):
                 return 1e10
-            ll = 0.0
-            for t in range(1, len(lr1)):
-                V_t        = max(rv[t - 1], 1e-8)
-                mu         = -0.5 * V_t * dt
-                sig2       = V_t * dt * (1.0 - rho ** 2) + 1e-10
-                ll        += -0.5 * (np.log(2 * np.pi * sig2)
-                                     + (lr1[t] - mu) ** 2 / sig2)
+            V_t  = np.maximum(rv[:-1], 1e-8)
+            mu_v = -0.5 * V_t * dt
+            sig2 = V_t * dt * (1.0 - rho ** 2) + 1e-10
+            ll   = float((-0.5 * (np.log(2 * np.pi * sig2)
+                                  + (lr1[1:] - mu_v) ** 2 / sig2)).sum())
             return -ll / len(lr1)
 
         x0      = [p0.kappa, p0.theta, p0.xi, p0.rho]
