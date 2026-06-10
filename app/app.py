@@ -513,9 +513,15 @@ if st.session_state["page"] == "setup":
     # ── Issuer (optional) ────────────────────────────────────────────────
     st.subheader("Issuer (optional)")
     st.caption("Name of the bank or institution that issued this note — used for display only.")
+    # Source of truth: loaded_terms (from JSON) takes priority over widget state.
+    # Push the loaded issuer into session_state before the widget renders, so the
+    # Streamlit keyed-widget problem (value= is ignored on reruns) doesn't drop it.
+    _base_issuer = getattr(base, "issuer", "") or ""
+    if loaded_terms is not None and _base_issuer and st.session_state.get("setup_issuer") != _base_issuer:
+        st.session_state["setup_issuer"] = _base_issuer
     issuer_input = st.text_input(
         "Issuer name",
-        value=getattr(base, "issuer", "") or "",
+        value=_base_issuer,
         placeholder="e.g. BBVA, HSBC, BNP Paribas",
         key="setup_issuer",
     )
