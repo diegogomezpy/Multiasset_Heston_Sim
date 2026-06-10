@@ -698,6 +698,9 @@ elif st.session_state["page"] == "dashboard":
         disabled=not bool(st.session_state.get("results")),
         help="Run a simulation first to enable the PDF report.",
     )
+    # Placeholder so the generated download button appears right here, directly
+    # under the trigger button — not buried at the bottom of the sidebar.
+    _pdf_slot = st.sidebar.empty()
     st.sidebar.divider()
     if st.sidebar.button("⚙️ Reconfigure Note"):
         st.session_state["page"]             = "setup"
@@ -1613,7 +1616,7 @@ elif st.session_state["page"] == "dashboard":
                 live_data   = st.session_state.get("_pdf_live_data"),
                 live_figure = st.session_state.get("_pdf_live_figure"),
             )
-        st.sidebar.download_button(
+        _pdf_slot.download_button(
             "⬇ Download PDF",
             data=_pdf_bytes,
             file_name=f"{run_terms.name.replace(' ', '_')}_report.pdf",
