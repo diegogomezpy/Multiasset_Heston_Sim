@@ -672,7 +672,8 @@ class HestonCalibrator:
         Return-return correlation from 2-day overlapping log returns.
         Shape: (n, n)
         """
-        C = np.corrcoef(lr2.T)
+        # np.corrcoef collapses to a 0-d scalar for a single asset; force 2-d.
+        C = np.atleast_2d(np.corrcoef(lr2.T))
         np.fill_diagonal(C, 1.0)
         return C
 
@@ -681,7 +682,8 @@ class HestonCalibrator:
         Variance-variance correlation from rolling RV series.
         Shape: (n, n)
         """
-        C = np.corrcoef(rv.T)
+        # np.corrcoef collapses to a 0-d scalar for a single asset; force 2-d.
+        C = np.atleast_2d(np.corrcoef(rv.T))
         np.fill_diagonal(C, 1.0)
         return C
 

@@ -896,8 +896,14 @@ elif st.session_state["page"] == "dashboard":
         obs_steps_i = run_terms.obs_steps(N)
         obs_times_l = run_terms.obs_times()
         obs_pairs   = [(f"P{i+1}", t) for i, t in enumerate(obs_times_l)]
+        # Step-down autocall barrier: pass the per-observation schedule to charts
+        # so the line follows the decline (None for constant-barrier notes).
+        _ac_levels   = run_terms.autocall_barrier_schedule()
+        _ac_sched_t  = list(zip(obs_times_l, _ac_levels)) if run_terms.autocall_step_down else None
+        _ac_sched_st = list(zip(obs_steps_i, _ac_levels)) if run_terms.autocall_step_down else None
     else:
         run_terms = terms
+        _ac_sched_t = _ac_sched_st = None
 
     if _has_live:
         tab_mc, tab_bt, tab_live = st.tabs(["📊 Monte Carlo", "📅 Historical Backtest", "📍 Current Performance"])
@@ -928,6 +934,7 @@ elif st.session_state["page"] == "dashboard":
                 "wof_fan": build_wof_fan(
                     wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
                     autocall_barrier=run_terms.autocall_barrier,
+                    autocall_schedule=_ac_sched_t,
                 ),
                 "corr": build_corr_heatmap(R["corr_SS"], asset_names, "Input"),
             }
@@ -1007,7 +1014,8 @@ elif st.session_state["page"] == "dashboard":
                 st.markdown(tr("wof_basket_md"))
                 st.plotly_chart(
                     build_wof_fan(wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
-                                  autocall_barrier=run_terms.autocall_barrier),
+                                  autocall_barrier=run_terms.autocall_barrier,
+                                  autocall_schedule=_ac_sched_t),
                     use_container_width=True,
                 )
                 st.markdown(tr("individual_paths_md"))
@@ -1048,6 +1056,7 @@ elif st.session_state["page"] == "dashboard":
                         run_terms.knock_in_barrier, pn, tr,
                         asset_paths=asset_perf_pn, asset_names=asset_names,
                         autocall_barrier=run_terms.autocall_barrier,
+                        autocall_schedule=_ac_sched_st,
                     ),
                     use_container_width=True,
                 )
