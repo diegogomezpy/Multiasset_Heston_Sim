@@ -195,6 +195,155 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Una calibración risk-neutral desde opciones recuperaría el ρ negativo esperado.",
     ),
 
+    # ── Note structure expander ────────────────────────────────────────────
+    "note_structure_expander":   ("📖 Note Structure Summary",         "📖 Resumen de la Estructura de la Nota"),
+    "underlyings_header":        ("**Underlyings**",                   "**Subyacentes**"),
+    "col_display_name":          ("Display Name",                      "Nombre"),
+    "col_yf_symbol":             ("yfinance Symbol",                   "Símbolo yfinance"),
+    "metric_maturity":           ("Maturity",                          "Vencimiento"),
+    "metric_observations":       ("Observations",                      "Observaciones"),
+    "metric_frequency":          ("Frequency",                         "Frecuencia"),
+    "metric_coupon_pa":          ("Coupon p.a.",                       "Cupón anual"),
+    "metric_coupon_period":      ("Coupon / period",                   "Cupón / período"),
+    "metric_memory":             ("Memory",                            "Memoria"),
+    "metric_coupon_barrier":     ("Coupon barrier",                    "Barrera de cupón"),
+    "metric_autocall_barrier":   ("Autocall barrier",                  "Barrera autocall"),
+    "metric_ki_barrier":         ("Knock-in barrier",                  "Barrera knock-in"),
+    "yes":                       ("Yes",                               "Sí"),
+    "no_str":                    ("No",                                "No"),
+    "col_period":                ("Period",                            "Período"),
+    "col_time_y":                ("Time (Y)",                          "Tiempo (A)"),
+    "col_autocall_eligible":     ("Autocall eligible",                 "Elegible autocall"),
+    "best_of_rescue_info":       (
+        "**Best-of capital rescue:** at maturity, capital is returned at par if the "
+        "best performer finishes ≥ {barrier:.0%} of initial, even if the knock-in barrier was breached.",
+        "**Rescate best-of de capital:** al vencimiento, el capital se devuelve a la par si el "
+        "mejor subyacente termina ≥ {barrier:.0%} del inicial, incluso si la barrera knock-in fue tocada.",
+    ),
+
+    # ── MC tab — top-level ─────────────────────────────────────────────────
+    "summary_stats_header":      ("Summary Statistics",                "Estadísticas Resumen"),
+    "expected_irr_pa":           ("Expected IRR p.a. (simple)",        "TIR Esperada p.a. (simple)"),
+    "expected_total_return":     ("Expected Total Return",             "Rendimiento Total Esperado"),
+    "expected_coupon_metric":    ("Expected Coupon",                   "Cupón Esperado"),
+    "prob_autocalled":           ("P(Autocalled)",                     "P(Autocall)"),
+    "prob_knock_in_metric":      ("P(Knock-in)",                       "P(Knock-in)"),
+    "barrier_rescued_caption":   (
+        "Barrier breached on {barrier:.2%} of paths; {rescued:.2%} were rescued to par by the "
+        "final redemption condition ({basket} ≥ {level:.0%}).",
+        "Barrera tocada en el {barrier:.2%} de trayectorias; {rescued:.2%} fueron rescatadas a la par por "
+        "la condición de redención final ({basket} ≥ {level:.0%}).",
+    ),
+    "autocall_by_period_expander": ("Autocall probability by period", "Probabilidad de autocall por período"),
+    "col_eligible":              ("Eligible",                          "Elegible"),
+    "col_p_autocall":            ("P(autocall)",                       "P(autocall)"),
+
+    # ── MC sub-tabs ────────────────────────────────────────────────────────
+    "mc_subtab_payoff":          ("📊 Payoff & Distribution",          "📊 Payoff y Distribución"),
+    "mc_subtab_paths":           ("📈 Price Paths",                    "📈 Trayectorias de Precio"),
+    "mc_subtab_explorer":        ("🔍 Path Explorer",                  "🔍 Explorador de Trayectorias"),
+    "mc_subtab_corr":            ("🔗 Correlation Diagnostics",        "🔗 Diagnóstico de Correlaciones"),
+
+    # ── MC tab1 — IRR distribution ─────────────────────────────────────────
+    "irr_dist_subheader":        ("IRR Distribution — All Simulated Paths",
+                                  "Distribución de TIR — Todas las Trayectorias Simuladas"),
+    "knock_in_info":             (
+        "**{pct:.1%}** of paths trigger the knock-in barrier ({barrier:.0%}) at maturity.",
+        "**{pct:.1%}** de las trayectorias activan la barrera knock-in ({barrier:.0%}) al vencimiento.",
+    ),
+
+    # ── MC tab2 — price paths ──────────────────────────────────────────────
+    "price_paths_subheader":     ("Simulated Price Path Fan Charts",   "Abanicos de Trayectorias de Precio Simuladas"),
+    "wof_basket_md":             ("#### Worst-of Basket Performance",  "#### Rendimiento de la Cesta Worst-of"),
+    "individual_paths_md":       ("#### Individual Underlying Paths",  "#### Trayectorias Individuales de Subyacentes"),
+
+    # ── MC tab3 — path explorer ────────────────────────────────────────────
+    "single_path_subheader":     ("Single Path Explorer",              "Explorador de Trayectoria Individual"),
+    "path_caption":              ("Path #{n} of {total}",              "Trayectoria #{n} de {total}"),
+    "autocalled_at_md":          ("### ✅ Autocalled at period {q} ({t:.3g}Y)",
+                                  "### ✅ Autocall en período {q} ({t:.3g}A)"),
+    "maturity_knock_in_md":      ("### ⚠️ Maturity — Knock-in (worst-of: {wof:.1%})",
+                                  "### ⚠️ Vencimiento — Knock-in (worst-of: {wof:.1%})"),
+    "maturity_no_knock_in_md":   ("### 📈 Maturity — No knock-in (worst-of: {wof:.1%})",
+                                  "### 📈 Vencimiento — Sin knock-in (worst-of: {wof:.1%})"),
+    "metric_principal":          ("Principal",                         "Principal"),
+    "metric_coupons":            ("Coupons",                           "Cupones"),
+    "metric_irr_pa":             ("IRR p.a.",                          "TIR p.a."),
+
+    # ── MC tab4 — correlation ──────────────────────────────────────────────
+    "corr_diag_subheader":       ("Correlation Diagnostics",           "Diagnóstico de Correlaciones"),
+    "calib_heston_subheader":    ("Calibrated Heston Parameters",      "Parámetros Heston Calibrados"),
+    "t_copula_dof":              ("**Student-t Copula:** ν = {v} d.f.", "**Cópula Student-t:** ν = {v} g.l."),
+
+    # ── Backtest tab — headers and intros ──────────────────────────────────
+    "bt_tab_header":             ("📅 Historical Backtest",            "📅 Backtest Histórico"),
+    "bt_tab_intro":              (
+        "Evaluates this note on every valid issue date using actual realized prices.",
+        "Evalúa esta nota en cada fecha de emisión válida usando precios reales realizados.",
+    ),
+    "bt_valid_dates_caption":    (
+        "Valid issue dates: **{start} → {end}** "
+        "(issues run from the start of aligned history — e.g. the latest IPO — up to "
+        "{mat:g}Y before the end of data, so each issue has a full realized "
+        "price path; aligned history: {hist_start} → {hist_end}).",
+        "Fechas de emisión válidas: **{start} → {end}** "
+        "(emisiones desde el inicio del historial alineado — ej. la última OPV — hasta "
+        "{mat:g}A antes del fin de los datos, para que cada emisión tenga un path completo; "
+        "historial alineado: {hist_start} → {hist_end}).",
+    ),
+    "bt_start_label":            ("Backtest start (issue dates from)", "Inicio del backtest (fechas de emisión desde)"),
+    "bt_end_label":              ("Backtest end (issue dates until)",   "Fin del backtest (fechas de emisión hasta)"),
+    "bt_apply_btn":              ("Apply",                             "Aplicar"),
+    "bt_date_order_warning":     ("Backtest start is after end — range not applied.",
+                                  "El inicio del backtest es posterior al fin — rango no aplicado."),
+    "bt_metric_issue_dates":     ("Issue Dates",                       "Fechas de Emisión"),
+    "bt_metric_mean_irr":        ("Mean IRR",                          "TIR Promedio"),
+    "bt_metric_median_irr":      ("Median IRR",                        "TIR Mediana"),
+    "bt_metric_knock_in_pct":    ("Knock-in %",                        "% Knock-in"),
+    "bt_metric_autocalled_pct":  ("Autocalled %",                      "% Autocall"),
+    "bt_path_explorer_header":   ("📅 Historical Path Explorer",       "📅 Explorador de Trayectorias Históricas"),
+    "bt_path_explorer_caption":  (
+        "Select any issue date from the backtest to see the actual "
+        "per-asset performance and worst-of path over the note's life.",
+        "Selecciona cualquier fecha de emisión del backtest para ver el rendimiento real "
+        "por activo y la trayectoria worst-of durante la vida de la nota.",
+    ),
+    "bt_issue_date_select":      ("Issue date",                        "Fecha de emisión"),
+
+    # ── Current Performance tab ────────────────────────────────────────────
+    "live_tab_header_md":        (
+        "**Issue date:** {issue} &nbsp;·&nbsp; "
+        "**Maturity:** {mat} &nbsp;·&nbsp; "
+        "**Elapsed:** {elapsed:.2f}Y &nbsp;·&nbsp; "
+        "**Remaining:** {remaining:.2f}Y",
+        "**Fecha de emisión:** {issue} &nbsp;·&nbsp; "
+        "**Vencimiento:** {mat} &nbsp;·&nbsp; "
+        "**Transcurrido:** {elapsed:.2f}A &nbsp;·&nbsp; "
+        "**Restante:** {remaining:.2f}A",
+    ),
+    "live_metric_wof_today":     ("Worst-of Today",                    "Worst-of Hoy"),
+    "live_metric_vs_strike":     ("{v:.1%} vs strike",                 "{v:.1%} vs strike"),
+    "live_metric_worst_asset":   ("Worst Asset",                       "Activo Más Débil"),
+    "live_metric_vs_ki":         ("vs KI Barrier",                     "vs Barrera KI"),
+    "live_metric_vs_autocall":   ("vs Autocall",                       "vs Autocall"),
+    "live_asset_perf_header":    ("#### Current Asset Performance",    "#### Rendimiento Actual por Activo"),
+    "live_obs_history_header":   ("#### Observation History",          "#### Historial de Observaciones"),
+    "live_col_period":           ("Period",                            "Período"),
+    "live_col_date":             ("Date",                              "Fecha"),
+    "live_col_status":           ("Status",                            "Estado"),
+    "live_col_wof":              ("Worst-of",                          "Worst-of"),
+    "live_col_coupon":           ("Coupon",                            "Cupón"),
+    "live_col_cumulative":       ("Cumulative",                        "Acumulado"),
+    "live_pending_coupons_info": (
+        "**{n} coupon(s) pending** in memory — "
+        "worth **{val:.4%}** "
+        "(paid when worst-of next exceeds {barrier:.0%}).",
+        "**{n} cupón/es pendiente(s)** en memoria — "
+        "equivalen a **{val:.4%}** "
+        "(se pagan cuando el worst-of supere {barrier:.0%}).",
+    ),
+    "live_coupon_irr_metric":    ("Coupon IRR to date (annualised)",   "TIR de cupones hasta hoy (anualizada)"),
+
     # ── Backtest ───────────────────────────────────────────────────────────
     "backtest_header":          ("📅 Historical Backtest",           "📅 Backtest Histórico"),
     "backtest_intro":           (
