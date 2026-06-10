@@ -21,6 +21,15 @@ Key features
   - Cash-equivalent physical delivery at maturity if knock-in triggered
   - Configurable observation frequency (monthly, quarterly, etc.)
   - JSON-serialisable via NoteTerms.to_dict() / NoteTerms.from_dict()
+
+Extensibility
+-------------
+  - BarrierCondition: dataclass describing a single trigger condition.
+  - ConditionRegistry: maps condition names to BarrierCondition instances.
+  - price_note() builds a ConditionRegistry from NoteTerms at entry and
+    dispatches the payoff loop over registered conditions.  Adding a new
+    barrier type only requires registering a new BarrierCondition — the
+    existing payoff logic is unchanged.
 """
 
 from __future__ import annotations
@@ -29,7 +38,7 @@ import json
 import warnings
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Callable, Literal
 
 BasketType = Literal["worst_of", "best_of", "average"]
 
@@ -53,6 +62,149 @@ def _basket(perf: np.ndarray, kind: BasketType) -> np.ndarray:
         return perf.mean(axis=1)
     else:
         raise ValueError(f"Unknown basket type '{kind}'. Use 'worst_of', 'best_of', or 'average'.")
+
+
+# ---------------------------------------------------------------------------
+# BarrierCondition — describes a single trigger condition
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BarrierCondition:
+    """
+    Describes a single barrier/trigger condition for a structured note.
+
+    Attributes
+    ----------
+    name : str
+        Identifier, e.g. "autocall", "coupon", "knock_in", "protection".
+    kind : Literal["autocall", "coupon", "protection", "custom"]
+        Determines how price_note() processes this condition:
+          "autocall"   — early redemption check; uses basket + level.
+          "coupon"     — periodic income check; uses basket + level, supports memory.
+          "protection" — final capital-loss guard (knock-in / rescue); uses basket + level.
+          "custom"     — fully custom; evaluate() is called instead of basket+level logic.
+    basket : BasketType
+        Aggregation method across assets: "worst_of", "best_of", or "average".
+    level : float
+        Barrier level as a fraction of initial (e.g. 1.0 = 100%, 0.55 = 55%).
+    start_period : int
+        First observation period (1-indexed) where this condition is active.
+    memory : bool
+        For coupon conditions: accumulate missed coupons and pay on next trigger.
+    evaluate : Callable[[np.ndarray], np.ndarray] | None
+        Optional override for fully custom logic.
+        Signature: fn(perf_slice: (n_paths, n_assets)) -> (n_paths,) float/bool.
+        When None the standard basket+level comparison is used.
+        Only consulted for kind="custom".
+    """
+    name:         str
+    kind:         Literal["autocall", "coupon", "protection", "custom"]
+    basket:       BasketType
+    level:        float
+    start_period: int                    = 1
+    memory:       bool                   = False
+    evaluate:     Callable | None        = None
+
+    def apply(self, perf_slice: np.ndarray) -> np.ndarray:
+        """
+        Evaluate the condition against a per-observation performance slice.
+
+        perf_slice : (n_paths, n_assets) — performance at one observation date.
+        Returns    : (n_paths,) float — 1.0 where condition is met, else 0.0.
+                     For "custom" kind, the evaluate callable may return any float.
+        """
+        if self.kind == "custom" and self.evaluate is not None:
+            return self.evaluate(perf_slice)
+        basket_vals = _basket(perf_slice, self.basket)
+        return (basket_vals >= self.level).astype(float)
+
+
+# ---------------------------------------------------------------------------
+# ConditionRegistry
+# ---------------------------------------------------------------------------
+
+class ConditionRegistry:
+    """
+    Ordered registry mapping condition names to BarrierCondition instances.
+
+    price_note() processes conditions in insertion order:
+      autocall conditions are checked before coupon conditions, which are
+      checked before protection conditions.  This mirrors the real waterfall
+      on a structured-note term sheet.
+    """
+
+    def __init__(self) -> None:
+        self._conditions: dict[str, BarrierCondition] = {}
+
+    def register(self, condition: BarrierCondition) -> None:
+        """Add or replace a condition by name."""
+        self._conditions[condition.name] = condition
+
+    def get(self, name: str) -> BarrierCondition | None:
+        """Return the condition with the given name, or None."""
+        return self._conditions.get(name)
+
+    def all(self) -> list[BarrierCondition]:
+        """Return all registered conditions in insertion order."""
+        return list(self._conditions.values())
+
+    def by_kind(self, kind: str) -> list[BarrierCondition]:
+        """Return all conditions of a given kind, in insertion order."""
+        return [c for c in self._conditions.values() if c.kind == kind]
+
+    @classmethod
+    def from_note_terms(cls, terms: "NoteTerms") -> "ConditionRegistry":
+        """
+        Build a ConditionRegistry from a NoteTerms instance.
+
+        This is the canonical factory used by price_note().  It encodes the
+        same barrier semantics as the pre-refactor monolithic payoff loop,
+        ensuring full backward compatibility.
+
+        Condition insertion order (= processing order in price_note()):
+          1. "autocall"   — early redemption trigger
+          2. "coupon"     — periodic coupon trigger (with optional memory)
+          3. "knock_in"   — European KI protection barrier at maturity
+          4. "protection" — final-basket rescue condition (e.g. BBVA best-of)
+        """
+        registry = cls()
+
+        registry.register(BarrierCondition(
+            name="autocall",
+            kind="autocall",
+            basket=terms.autocall_basket,
+            level=terms.autocall_barrier,
+            start_period=terms.autocall_start_period,
+        ))
+
+        registry.register(BarrierCondition(
+            name="coupon",
+            kind="coupon",
+            basket=terms.coupon_basket,
+            level=terms.coupon_barrier,
+            start_period=1,
+            memory=terms.memory,
+        ))
+
+        # knock_in uses worst_of unconditionally (per spec: always worst performer)
+        registry.register(BarrierCondition(
+            name="knock_in",
+            kind="protection",
+            basket="worst_of",
+            level=terms.knock_in_barrier,
+            start_period=1,
+        ))
+
+        # final redemption rescue (e.g. BBVA best-of condition)
+        registry.register(BarrierCondition(
+            name="protection",
+            kind="protection",
+            basket=terms.final_basket,
+            level=terms.final_redemption_barrier,
+            start_period=1,
+        ))
+
+        return registry
 
 
 # ---------------------------------------------------------------------------
@@ -299,24 +451,38 @@ def price_note(
     n_obs = terms.n_obs
     rng = np.random.default_rng(seed)
 
+    # ------------------------------------------------------------------
+    # Build ConditionRegistry from NoteTerms (backward-compatible factory)
+    # ------------------------------------------------------------------
+    registry = ConditionRegistry.from_note_terms(terms)
+
+    autocall_cond   = registry.get("autocall")    # BarrierCondition, kind="autocall"
+    coupon_cond     = registry.get("coupon")      # BarrierCondition, kind="coupon"
+    knock_in_cond   = registry.get("knock_in")    # BarrierCondition, kind="protection"
+    protection_cond = registry.get("protection")  # BarrierCondition, kind="protection" (rescue)
+
     # Draw autocall decisions: (n_paths, n_obs)
     call_draws = rng.random((n_paths, n_obs))
 
+    # ------------------------------------------------------------------
     # Per-observation basket values
-    # coupon_basket_vals[j] : (n_paths,)
-    coupon_basket_vals   = np.stack(
-        [_basket(perf_paths[:, s, :], terms.coupon_basket)   for s in obs_steps], axis=1
+    # ------------------------------------------------------------------
+    coupon_basket_vals = np.stack(
+        [_basket(perf_paths[:, s, :], coupon_cond.basket) for s in obs_steps], axis=1
     )  # (n_paths, n_obs)
 
     autocall_basket_vals = np.stack(
-        [_basket(perf_paths[:, s, :], terms.autocall_basket) for s in obs_steps], axis=1
+        [_basket(perf_paths[:, s, :], autocall_cond.basket) for s in obs_steps], axis=1
     )  # (n_paths, n_obs)
 
+    # ------------------------------------------------------------------
+    # Autocall trigger
+    # ------------------------------------------------------------------
     # Autocall mask: only eligible from autocall_start_period onward
     autocall_eligible = np.zeros(n_obs, dtype=bool)
-    autocall_eligible[terms.autocall_start_period - 1:] = True  # 1-indexed → 0-indexed
+    autocall_eligible[autocall_cond.start_period - 1:] = True  # 1-indexed → 0-indexed
 
-    # Autocall probabilities per period
+    # Autocall probabilities per period (uses NoteTerms.autocall_prob for soft/hard dispatch)
     autocall_probs = terms.autocall_prob(autocall_basket_vals)   # (n_paths, n_obs)
     autocall_probs[:, ~autocall_eligible] = 0.0
 
@@ -329,10 +495,9 @@ def price_note(
     autocall_period  = np.where(any_autocalled, first_call_idx + 1, 0).astype(int)
 
     # ------------------------------------------------------------------
-    # Coupon calculation — with memory
+    # Coupon calculation — dispatched via coupon_cond
     # ------------------------------------------------------------------
-    # coupon_paid[i, j] = True if coupon is actually paid at period j on path i
-    coupon_barrier_met = coupon_basket_vals >= terms.coupon_barrier   # (n_paths, n_obs)
+    coupon_barrier_met = coupon_basket_vals >= coupon_cond.level   # (n_paths, n_obs)
 
     # For each path, coupons are paid up to and including the autocall period
     # (or all periods if reaching maturity)
@@ -342,7 +507,7 @@ def price_note(
     period_idx   = np.arange(1, n_obs + 1)[np.newaxis, :]            # (1, n_obs)
     active_mask  = period_idx <= active_until[:, np.newaxis]          # (n_paths, n_obs)
 
-    if terms.memory:
+    if coupon_cond.memory:
         # Memory coupon — fully vectorized via cumulative sum trick.
         #
         # Key insight: the memory coupon paid at period j (when barrier is met)
@@ -408,17 +573,19 @@ def price_note(
     total_coupons = coupon_amounts.sum(axis=1)   # (n_paths,)
 
     # ------------------------------------------------------------------
-    # Principal redemption
+    # Principal redemption — dispatched via knock_in_cond + protection_cond
     # ------------------------------------------------------------------
     # Autocalled paths: receive 100% principal back
     autocall_principal = np.ones(n_paths)
 
     # Maturity paths: check knock-in + final redemption condition
-    final_basket_val = _basket(perf_paths[:, N, :], terms.final_basket)   # (n_paths,)
-    worst_final      = perf_paths[:, N, :].min(axis=1)                    # always worst-of for KI check
+    # final_basket uses the protection_cond basket (e.g. best_of for BBVA)
+    final_basket_val = _basket(perf_paths[:, N, :], protection_cond.basket)   # (n_paths,)
+    # knock-in always checks worst-of (per knock_in_cond.basket = "worst_of")
+    worst_final      = _basket(perf_paths[:, N, :], knock_in_cond.basket)     # (n_paths,)
 
-    # Barrier (knock-in) event: worst-of below the KI barrier at final valuation
-    barrier_event = worst_final < terms.knock_in_barrier   # (n_paths,)
+    # Barrier (knock-in) event: knock-in basket below the KI level at final valuation
+    barrier_event = worst_final < knock_in_cond.level   # (n_paths,)
 
     # Final redemption condition ('rescue'): if the final basket value is at or
     # above final_redemption_barrier, the note redeems at par EVEN IF the
@@ -436,7 +603,7 @@ def price_note(
     # For plain worst-of notes (e.g. HSBC XS3376563584, final_basket="worst_of")
     # the rescue condition (worst >= 100%) can never coincide with a barrier
     # event (worst < 55%), so this reduces to the standard payoff unchanged.
-    rescued      = final_basket_val >= terms.final_redemption_barrier
+    rescued      = final_basket_val >= protection_cond.level
     capital_loss = barrier_event & ~rescued
 
     # Capital loss: cash-equivalent physical delivery = worst-of final performance.
