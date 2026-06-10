@@ -68,6 +68,24 @@ _LABELS: dict[str, dict[str, str]] = {
     # Heston table
     "asset":                 {"en": "Asset",                            "es": "Activo"},
     "feller":                {"en": "Feller",                           "es": "Feller"},
+    # Backtest section
+    "bt_summary":            {"en": "Historical Backtest Summary",      "es": "Resumen del Backtest Histórico"},
+    "bt_outcome_chart":      {"en": "Backtest Outcome Distribution",    "es": "Distribución de Resultados del Backtest"},
+    "bt_irr_scatter":        {"en": "Backtest IRR by Issue Date",       "es": "TIR del Backtest por Fecha de Emisión"},
+    "bt_n_issues":           {"en": "Issue Dates Tested",               "es": "Fechas de Emisión Probadas"},
+    "bt_mean_irr":           {"en": "Mean IRR p.a.",                    "es": "TIR Media Anual"},
+    "bt_median_irr":         {"en": "Median IRR p.a.",                  "es": "TIR Mediana Anual"},
+    "bt_knock_in_pct":       {"en": "Knock-in Rate",                    "es": "Tasa de Knock-in"},
+    "bt_autocalled_pct":     {"en": "Autocall Rate",                    "es": "Tasa de Autocall"},
+    # Live performance section
+    "live_summary":          {"en": "Current Performance",              "es": "Rendimiento Actual"},
+    "live_wof_today":        {"en": "Worst-of Today",                   "es": "Peor Activo Hoy"},
+    "live_worst_asset":      {"en": "Worst Asset",                      "es": "Activo Peor"},
+    "live_irr_to_date":      {"en": "Coupon IRR to Date (ann.)",        "es": "TIR Cupones a Fecha (anual.)"},
+    "live_elapsed":          {"en": "Elapsed (years)",                  "es": "Transcurrido (años)"},
+    "live_asset_perf":       {"en": "Current Asset Performance",        "es": "Rendimiento Actual por Activo"},
+    "live_obs_history":      {"en": "Observation History",              "es": "Historial de Observaciones"},
+    "live_perf_chart":       {"en": "Live Performance Chart",           "es": "Gráfico de Rendimiento en Vivo"},
 }
 
 
@@ -199,17 +217,14 @@ def generate_pdf_report(
     asset_names: list[str],
     figures: dict,
     lang: str = "en",
+    bt_summary: dict | None = None,
+    bt_figures: dict | None = None,
+    live_data: dict | None = None,
+    live_figure=None,
 ) -> bytes:
     """
-    Build a PDF report for a completed Monte Carlo simulation and return raw bytes.
-
-    Parameters
-    ----------
-    terms       : NoteTerms instance
-    results     : st.session_state["results"]
-    asset_names : list of display names for the underlyings
-    figures     : dict with keys "irr_dist", "wof_fan", "corr" (go.Figure values)
-    lang        : "en" or "es"
+    Build a full PDF report covering MC simulation, historical backtest, and
+    current performance (when available). Returns raw PDF bytes.
     """
     pdf = _NotePDF(lang=lang)
     pdf.add_page()
@@ -329,5 +344,69 @@ def generate_pdf_report(
                 usable * 0.09, usable * 0.09, usable * 0.11,
             ],
         )
+
+    # ── 9. Historical Backtest ─────────────────────────────────────────────
+    if bt_summary:
+        pdf.add_page()
+        pdf.section_title(_t("bt_summary", lang))
+        bt_rows = [
+            (_t("bt_n_issues",       lang), str(bt_summary.get("n_issues",       0))),
+            (_t("bt_mean_irr",       lang), f"{bt_summary.get('mean_irr',       0):.2%}"),
+            (_t("bt_median_irr",     lang), f"{bt_summary.get('median_irr',     0):.2%}"),
+            (_t("bt_knock_in_pct",   lang), f"{bt_summary.get('prob_knock_in',  0):.1%}"),
+            (_t("bt_autocalled_pct", lang), f"{bt_summary.get('prob_called',    0):.1%}"),
+        ]
+        pdf.kv_table(bt_rows)
+
+        if bt_figures:
+            _outcome_fig = bt_figures.get("outcome")
+            if _outcome_fig is not None:
+                pdf.section_title(_t("bt_outcome_chart", lang))
+                img = _fig_to_png(_outcome_fig, width=700, height=350)
+                if img is not None:
+                    pdf.embed_image(img, w=180, h=90)
+
+            _irr_scatter_fig = bt_figures.get("irr_scatter")
+            if _irr_scatter_fig is not None:
+                pdf.section_title(_t("bt_irr_scatter", lang))
+                img = _fig_to_png(_irr_scatter_fig, width=700, height=350)
+                if img is not None:
+                    pdf.embed_image(img, w=180, h=90)
+
+    # ── 10. Current Performance ────────────────────────────────────────────
+    if live_data:
+        pdf.add_page()
+        pdf.section_title(_t("live_summary", lang))
+        live_rows = [
+            (_t("live_wof_today",   lang), f"{live_data.get('wof_today', 0):.1%}"),
+            (_t("live_worst_asset", lang), str(live_data.get("worst_asset", ""))),
+            (_t("live_irr_to_date", lang), f"{live_data.get('irr_to_date', 0):.2%}"),
+            (_t("live_elapsed",     lang), f"{live_data.get('elapsed_years', 0):.2f}"),
+        ]
+        pdf.kv_table(live_rows)
+
+        perf_today = live_data.get("perf_today", {})
+        if perf_today:
+            pdf.section_title(_t("live_asset_perf", lang))
+            ap_headers = [_t("asset", lang), "Performance"]
+            ap_rows = [[name, f"{perf:.1%}"] for name, perf in perf_today.items()]
+            usable = pdf.w - pdf.l_margin - pdf.r_margin
+            pdf.data_table(ap_headers, ap_rows, col_widths=[usable * 0.5, usable * 0.5])
+
+        obs_rows = live_data.get("obs_rows", [])
+        if obs_rows:
+            pdf.section_title(_t("live_obs_history", lang))
+            obs_headers = list(obs_rows[0].keys()) if obs_rows else []
+            obs_data    = [[str(r.get(h, "")) for h in obs_headers] for r in obs_rows]
+            if obs_headers:
+                n_cols  = len(obs_headers)
+                usable  = pdf.w - pdf.l_margin - pdf.r_margin
+                pdf.data_table(obs_headers, obs_data, col_widths=[usable / n_cols] * n_cols)
+
+        if live_figure is not None:
+            pdf.section_title(_t("live_perf_chart", lang))
+            img = _fig_to_png(live_figure, width=700, height=350)
+            if img is not None:
+                pdf.embed_image(img, w=180, h=90)
 
     return bytes(pdf.output())

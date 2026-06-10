@@ -693,6 +693,11 @@ elif st.session_state["page"] == "dashboard":
         file_name="note_config.json",
         mime="application/json",
     )
+    _pdf_btn = st.sidebar.button(
+        "📄 Download PDF Report",
+        disabled=not bool(st.session_state.get("results")),
+        help="Run a simulation first to enable the PDF report.",
+    )
     st.sidebar.divider()
     if st.sidebar.button("⚙️ Reconfigure Note"):
         st.session_state["page"]             = "setup"
@@ -703,14 +708,33 @@ elif st.session_state["page"] == "dashboard":
 
     # ── Title ─────────────────────────────────────────────────────────────
     st.title("📈 Multi-Asset Structured Note Simulator")
-    st.markdown(
-        f"**{terms.name}** — "
-        f"{', '.join(selected_tickers.values())} · "
-        f"{int(terms.maturity*12)}M · {terms.n_obs} obs · "
-        f"Coupon {terms.coupon_pa*100:.2g}% p.a. · "
-        f"{'Memory' if terms.memory else 'No memory'} · "
-        f"KI {terms.knock_in_barrier:.0%} · Autocall {terms.autocall_barrier:.0%}"
-    )
+    _issuer_str = getattr(terms, "issuer", "") or ""
+    _issuer_logo = get_issuer_logo_url(_issuer_str) if _issuer_str else None
+    if _issuer_str:
+        _issuer_badge = (
+            f'<img src="{_issuer_logo}" height="20" style="vertical-align:middle;margin-right:5px;border-radius:3px" '
+            f'onerror="this.style.display=\'none\'">'
+            if _issuer_logo else ""
+        ) + f"<span style='vertical-align:middle'>{_issuer_str}</span> &nbsp;·&nbsp; "
+        st.markdown(
+            f"<div style='margin-bottom:4px'>{_issuer_badge}"
+            f"<b>{terms.name}</b> — "
+            f"{', '.join(selected_tickers.values())} · "
+            f"{int(terms.maturity*12)}M · {terms.n_obs} obs · "
+            f"Coupon {terms.coupon_pa*100:.2g}% p.a. · "
+            f"{'Memory' if terms.memory else 'No memory'} · "
+            f"KI {terms.knock_in_barrier:.0%} · Autocall {terms.autocall_barrier:.0%}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"**{terms.name}** — "
+            f"{', '.join(selected_tickers.values())} · "
+            f"{int(terms.maturity*12)}M · {terms.n_obs} obs · "
+            f"Coupon {terms.coupon_pa*100:.2g}% p.a. · "
+            f"{'Memory' if terms.memory else 'No memory'} · "
+            f"KI {terms.knock_in_barrier:.0%} · Autocall {terms.autocall_barrier:.0%}"
+        )
 
     with st.expander(tr("note_structure_expander"), expanded=False):
         # Issuer row (if set)
@@ -879,6 +903,18 @@ elif st.session_state["page"] == "dashboard":
                     st.error(f"Failed to fetch prices: {e}")
         else:
             st.success(tr("sim_complete"))
+            # Cache MC figures for PDF generation (used by sidebar PDF button)
+            st.session_state["_pdf_mc_figures"] = {
+                "irr_dist": build_irr_distribution(
+                    R["annualized_returns"], R["autocall_events"],
+                    R["expected_irr"], run_terms.coupon_pa, tr,
+                ),
+                "wof_fan": build_wof_fan(
+                    wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
+                    autocall_barrier=run_terms.autocall_barrier,
+                ),
+                "corr": build_corr_heatmap(R["corr_SS"], asset_names, "Input"),
+            }
             # ── Summary metrics ───────────────────────────────────────
             st.header(tr("summary_stats_header"))
             c1, c2, c3, c4, c5 = st.columns(5)
@@ -1124,37 +1160,6 @@ elif st.session_state["page"] == "dashboard":
                 )
                 st.info(tr("t_copula_dof", v=R.get('t_dof', 'N/A')))
 
-            st.markdown("---")
-            st.subheader("📄 Download Report")
-            if st.button("Generate PDF Report", key="gen_pdf_btn"):
-                with st.spinner("Building PDF…"):
-                    from pdf_report import generate_pdf_report
-                    _pdf_bytes = generate_pdf_report(
-                        terms=run_terms,
-                        results=R,
-                        asset_names=asset_names,
-                        figures={
-                            "irr_dist": build_irr_distribution(
-                                R["annualized_returns"], R["autocall_events"],
-                                R["expected_irr"], run_terms.coupon_pa, tr,
-                            ),
-                            "wof_fan": build_wof_fan(
-                                wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
-                                autocall_barrier=run_terms.autocall_barrier,
-                            ),
-                            "corr": build_corr_heatmap(
-                                R["corr_SS"], asset_names, "Input",
-                            ),
-                        },
-                        lang="es" if lang_choice == "Español" else "en",
-                    )
-                st.download_button(
-                    "⬇ Download PDF",
-                    data=_pdf_bytes,
-                    file_name=f"{run_terms.name.replace(' ', '_')}_report.pdf",
-                    mime="application/pdf",
-                    key="dl_pdf_btn",
-                )
 
     # ══════════════════════════════════════════════════════════════════
     # TAB 2 — HISTORICAL BACKTEST
@@ -1324,10 +1329,15 @@ elif st.session_state["page"] == "dashboard":
                       help="Fraction of historical issue dates where the note was called early "
                            "at an autocall observation date before maturity.")
 
+            _bt_outcome_fig = build_backtest_outcome_bar(bt, color_map, tr)
+            _bt_irr_fig     = build_backtest_irr_scatter(bt, color_map, tr)
             col1, col2 = st.columns(2)
-            col1.plotly_chart(build_backtest_outcome_bar(bt, color_map, tr), use_container_width=True)
-            col2.plotly_chart(build_worst_asset_pie(bt, tr),                 use_container_width=True)
-            st.plotly_chart(build_backtest_irr_scatter(bt, color_map, tr),   use_container_width=True)
+            col1.plotly_chart(_bt_outcome_fig,                   use_container_width=True)
+            col2.plotly_chart(build_worst_asset_pie(bt, tr),     use_container_width=True)
+            st.plotly_chart(_bt_irr_fig,                         use_container_width=True)
+            # Cache for PDF
+            st.session_state["_pdf_bt_summary"] = bt_summary
+            st.session_state["_pdf_bt_figures"] = {"outcome": _bt_outcome_fig, "irr_scatter": _bt_irr_fig}
 
             try:
                 _hist_chart_prices = _load_prices(tickers_tuple, years=None)
@@ -1461,10 +1471,23 @@ elif st.session_state["page"] == "dashboard":
 
                     # ── Per-asset current performance ─────────────────
                     st.markdown(tr("live_asset_perf_header"))
+                    _live_disp_to_sym = {disp: sym for sym, disp in selected_tickers.items()}
                     _asset_cols = st.columns(len(asset_names))
                     for _i, (_aname, _acol) in enumerate(zip(asset_names, _asset_cols)):
                         _ap = float(_perf_today[_i])
-                        _acol.metric(_aname, f"{_ap:.1%}", tr("live_metric_vs_strike", v=_ap - 1.0))
+                        _live_sym = _live_disp_to_sym.get(_aname, "")
+                        _live_logo = (TICKER_LOGOS.get(_live_sym) or _LOGO_BASE.format(sym=_live_sym)) if _live_sym else None
+                        if _live_logo:
+                            _acol.markdown(
+                                f"<img src='{_live_logo}' width='24' height='24' "
+                                f"style='border-radius:4px;vertical-align:middle;margin-right:4px;' "
+                                f"onerror=\"this.style.display='none'\"/>"
+                                f"<b style='vertical-align:middle;'>{_aname}</b>",
+                                unsafe_allow_html=True,
+                            )
+                            _acol.metric("", f"{_ap:.1%}", tr("live_metric_vs_strike", v=_ap - 1.0))
+                        else:
+                            _acol.metric(_aname, f"{_ap:.1%}", tr("live_metric_vs_strike", v=_ap - 1.0))
 
                     # ── Coupon status replay ──────────────────────────
                     st.markdown(tr("live_obs_history_header"))
@@ -1543,24 +1566,57 @@ elif st.session_state["page"] == "dashboard":
                                    "coupons cluster toward the end of the life.")
 
                     # ── Live performance chart ────────────────────────
-                    st.plotly_chart(
-                        build_live_performance_chart(
-                            hist_prices        = _live_prices,
-                            issue_date         = _issue_ts,
-                            today              = _today_ts,
-                            maturity_date      = _mat_ts,
-                            obs_day_offsets    = _obs_offsets,
-                            obs_labels         = obs_labels,
-                            knock_in_barrier   = run_terms.knock_in_barrier,
-                            autocall_barrier   = run_terms.autocall_barrier,
-                            coupon_barrier     = run_terms.coupon_barrier,
-                            coupon_rate        = run_terms.coupon_rate,
-                            memory             = run_terms.memory,
-                            autocall_start_period = run_terms.autocall_start_period,
-                            tr                 = tr,
-                        ),
-                        use_container_width=True,
+                    _live_fig = build_live_performance_chart(
+                        hist_prices        = _live_prices,
+                        issue_date         = _issue_ts,
+                        today              = _today_ts,
+                        maturity_date      = _mat_ts,
+                        obs_day_offsets    = _obs_offsets,
+                        obs_labels         = obs_labels,
+                        knock_in_barrier   = run_terms.knock_in_barrier,
+                        autocall_barrier   = run_terms.autocall_barrier,
+                        coupon_barrier     = run_terms.coupon_barrier,
+                        coupon_rate        = run_terms.coupon_rate,
+                        memory             = run_terms.memory,
+                        autocall_start_period = run_terms.autocall_start_period,
+                        tr                 = tr,
                     )
+                    st.plotly_chart(_live_fig, use_container_width=True)
+                    # Cache for PDF
+                    st.session_state["_pdf_live_data"] = {
+                        "wof_today":    _wof_today,
+                        "worst_asset":  _worst_asset_today,
+                        "perf_today":   {n: float(p) for n, p in zip(asset_names, _perf_today)},
+                        "irr_to_date":  _irr_to_date,
+                        "elapsed_years": _elapsed_years,
+                        "obs_rows":     _obs_rows,
+                    }
+                    st.session_state["_pdf_live_figure"] = _live_fig
 
             except Exception as _e:
                 st.error(f"Could not load live price data: {_e}")
+
+    # ══════════════════════════════════════════════════════════════════
+    # PDF GENERATION (sidebar button — runs after all tab content)
+    # ══════════════════════════════════════════════════════════════════
+    if _pdf_btn and _has_sim:
+        with st.spinner("Building PDF report…"):
+            from pdf_report import generate_pdf_report
+            _pdf_bytes = generate_pdf_report(
+                terms       = run_terms,
+                results     = R,
+                asset_names = asset_names,
+                figures     = st.session_state.get("_pdf_mc_figures", {}),
+                lang        = "es" if lang_choice == "Español" else "en",
+                bt_summary  = st.session_state.get("_pdf_bt_summary"),
+                bt_figures  = st.session_state.get("_pdf_bt_figures"),
+                live_data   = st.session_state.get("_pdf_live_data"),
+                live_figure = st.session_state.get("_pdf_live_figure"),
+            )
+        st.sidebar.download_button(
+            "⬇ Download PDF",
+            data=_pdf_bytes,
+            file_name=f"{run_terms.name.replace(' ', '_')}_report.pdf",
+            mime="application/pdf",
+            key="dl_pdf_sidebar",
+        )
