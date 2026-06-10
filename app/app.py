@@ -706,9 +706,10 @@ elif st.session_state["page"] == "dashboard":
         mime="application/json",
     )
     _pdf_btn = st.sidebar.button(
-        "📄 Download PDF Report",
+        "📄 Generate PDF Report",
         disabled=not bool(st.session_state.get("results")),
-        help="Run a simulation first to enable the PDF report.",
+        help="Builds the report, then a download button appears below. "
+             "Run a simulation first to enable it.",
     )
     # Placeholder so the generated download button appears right here, directly
     # under the trigger button — not buried at the bottom of the sidebar.
@@ -768,10 +769,10 @@ elif st.session_state["page"] == "dashboard":
             "<tr>"
             "<td style='padding:4px 8px;vertical-align:middle;'>"
             + (
-                f"<img src='{TICKER_LOGOS[sym]}' width='24' height='24' "
+                f"<img src='{TICKER_LOGOS.get(sym) or _LOGO_BASE.format(sym=sym)}' "
+                f"width='24' height='24' "
                 f"style='border-radius:4px;vertical-align:middle;' "
                 f"onerror=\"this.style.display='none'\"/>"
-                if sym in TICKER_LOGOS else ""
             )
             + f"</td>"
             f"<td style='padding:4px 8px;vertical-align:middle;'>{disp}</td>"
