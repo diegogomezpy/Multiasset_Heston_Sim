@@ -712,7 +712,7 @@ elif st.session_state["page"] == "dashboard":
         f"KI {terms.knock_in_barrier:.0%} · Autocall {terms.autocall_barrier:.0%}"
     )
 
-    with st.expander("📖 Note Structure Summary", expanded=False):
+    with st.expander(tr("note_structure_expander"), expanded=False):
         # Issuer row (if set)
         if getattr(terms, "issuer", ""):
             _exp_logo = get_issuer_logo_url(terms.issuer)
@@ -723,8 +723,8 @@ elif st.session_state["page"] == "dashboard":
             ) if _exp_logo else f"<strong>Issuer:</strong> {terms.issuer}"
             st.markdown(_exp_issuer_html, unsafe_allow_html=True)
 
-        # Underlyings table
-        st.markdown("**Underlyings**")
+        # Underlyings table with logos
+        st.markdown(tr("underlyings_header"))
         _ul_rows_html = "".join(
             "<tr>"
             "<td style='padding:4px 8px;vertical-align:middle;'>"
@@ -754,23 +754,21 @@ elif st.session_state["page"] == "dashboard":
 
         st.divider()
         c1, c2, c3 = st.columns(3)
-        c1.metric("Maturity", f"{terms.maturity}Y")
-        c1.metric("Observations", f"{terms.n_obs}")
-        c1.metric("Frequency", terms.payment_freq.capitalize())
-        c2.metric("Coupon p.a.", f"{terms.coupon_pa*100:.2g}%")
-        c2.metric("Coupon / period", f"{terms.coupon_rate*100:.4f}%")
-        c2.metric("Memory", "Yes" if terms.memory else "No")
-        c3.metric("Coupon barrier", f"{terms.coupon_barrier:.0%}")
-        c3.metric("Autocall barrier", f"{terms.autocall_barrier:.0%}")
-        c3.metric("Knock-in barrier", f"{terms.knock_in_barrier:.0%}")
+        c1.metric(tr("metric_maturity"), f"{terms.maturity}Y")
+        c1.metric(tr("metric_observations"), f"{terms.n_obs}")
+        c1.metric(tr("metric_frequency"), terms.payment_freq.capitalize())
+        c2.metric(tr("metric_coupon_pa"), f"{terms.coupon_pa*100:.2g}%")
+        c2.metric(tr("metric_coupon_period"), f"{terms.coupon_rate*100:.4f}%")
+        c2.metric(tr("metric_memory"), tr("yes") if terms.memory else tr("no_str"))
+        c3.metric(tr("metric_coupon_barrier"), f"{terms.coupon_barrier:.0%}")
+        c3.metric(tr("metric_autocall_barrier"), f"{terms.autocall_barrier:.0%}")
+        c3.metric(tr("metric_ki_barrier"), f"{terms.knock_in_barrier:.0%}")
         if terms.final_basket == "best_of":
-            st.info(f"**Best-of capital rescue:** at maturity, capital is returned at par if the "
-                    f"best performer finishes ≥ {terms.final_redemption_barrier:.0%} of initial, "
-                    f"even if the knock-in barrier was breached.")
+            st.info(tr("best_of_rescue_info", barrier=terms.final_redemption_barrier))
         obs_df = pd.DataFrame({
-            "Period": range(1, terms.n_obs + 1),
-            "Time (Y)": [f"{t:.4g}" for t in terms.obs_times()],
-            "Autocall eligible": ["✅" if i + 1 >= terms.autocall_start_period else "❌ coupon only"
+            tr("col_period"): range(1, terms.n_obs + 1),
+            tr("col_time_y"): [f"{t:.4g}" for t in terms.obs_times()],
+            tr("col_autocall_eligible"): ["✅" if i + 1 >= terms.autocall_start_period else "❌ coupon only"
                                    for i in range(terms.n_obs)],
         })
         st.dataframe(obs_df, use_container_width=True, hide_index=True)
@@ -880,32 +878,32 @@ elif st.session_state["page"] == "dashboard":
                 except Exception as e:
                     st.error(f"Failed to fetch prices: {e}")
         else:
-            st.success("Simulation complete.")
+            st.success(tr("sim_complete"))
             # ── Summary metrics ───────────────────────────────────────
-            st.header("Summary Statistics")
+            st.header(tr("summary_stats_header"))
             c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Expected IRR p.a. (simple)",  f"{R['expected_irr']:.2%}",
+            c1.metric(tr("expected_irr_pa"),  f"{R['expected_irr']:.2%}",
                       help="Average of per-path annualized returns: mean(return ÷ holding time). "
                            "Early autocalls divide a small gain by a short holding period, so they "
                            "contribute large positive IRRs; knock-in losses are spread over the full "
                            "maturity. This can be positive even when Expected Total Return is "
                            "negative (average of ratios ≠ ratio of averages), and implicitly assumes "
                            "autocall proceeds are reinvested at similar rates.")
-            c2.metric("Expected Total Return", f"{R['expected_total_return']:.2%}",
+            c2.metric(tr("expected_total_return"), f"{R['expected_total_return']:.2%}",
                       help="Average money outcome per 1.00 invested over the note's life: "
                            "mean(payout − 1) = coupons received + principal returned − 1. "
                            "Not annualized. The more conservative headline number.")
-            c3.metric("Expected Coupon",       f"{R['expected_coupon']:.2%}",
+            c3.metric(tr("expected_coupon_metric"), f"{R['expected_coupon']:.2%}",
                       help="Average total coupon income received over the note's life, per path "
                            "(coupons across all periods, including memory catch-up payments). "
                            "Expressed as a fraction of par. Does not include principal redemption.")
-            c4.metric("P(Autocalled)",         f"{R['prob_autocall']:.2%}",
+            c4.metric(tr("prob_autocalled"),   f"{R['prob_autocall']:.2%}",
                       help="Probability the issuer exercises the call at any observation date "
                            "before (or at) maturity. An autocall terminates the note early, "
                            "returning principal plus the period coupon. Higher autocall barriers "
                            "reduce this probability; the autocall start period locks out early "
                            "observations from triggering.")
-            c5.metric("P(Knock-in)",           f"{R['prob_knock_in_total']:.2%}",
+            c5.metric(tr("prob_knock_in_metric"), f"{R['prob_knock_in_total']:.2%}",
                       help="Probability of capital loss at maturity: knock-in barrier breached "
                            "AND the final redemption condition not met. For notes with a best-of "
                            "final basket (e.g. BBVA XS3378405743), paths where the best performer "
@@ -913,19 +911,20 @@ elif st.session_state["page"] == "dashboard":
                            "worst breached the KI level — those are excluded here.")
             if R.get("prob_rescued", 0) > 0:
                 st.caption(
-                    f"Barrier breached on {R['prob_barrier_event']:.2%} of paths; "
-                    f"{R['prob_rescued']:.2%} were rescued to par by the final redemption "
-                    f"condition ({terms.final_basket.replace('_','-')} ≥ "
-                    f"{terms.final_redemption_barrier:.0%})."
+                    tr("barrier_rescued_caption",
+                       barrier=R['prob_barrier_event'],
+                       rescued=R['prob_rescued'],
+                       basket=terms.final_basket.replace('_', '-'),
+                       level=terms.final_redemption_barrier)
                 )
 
-            with st.expander("Autocall probability by period", expanded=False):
+            with st.expander(tr("autocall_by_period_expander"), expanded=False):
                 prob_by_period = R["prob_autocall_by_period"]
                 ac_df = pd.DataFrame({
-                    "Period":      range(1, run_terms.n_obs + 1),
-                    "Time (Y)":    [f"{t:.3g}" for t in obs_times_l],
-                    "P(autocall)": [f"{p:.2%}" for p in prob_by_period],
-                    "Eligible":    ["✅" if i + 1 >= run_terms.autocall_start_period else "❌"
+                    tr("col_period"):    range(1, run_terms.n_obs + 1),
+                    tr("col_time_y"):    [f"{t:.3g}" for t in obs_times_l],
+                    tr("col_p_autocall"): [f"{p:.2%}" for p in prob_by_period],
+                    tr("col_eligible"): ["✅" if i + 1 >= run_terms.autocall_start_period else "❌"
                                      for i in range(run_terms.n_obs)],
                 })
                 st.dataframe(ac_df, use_container_width=True, hide_index=True)
@@ -933,12 +932,12 @@ elif st.session_state["page"] == "dashboard":
             st.markdown("---")
 
             mc_tab1, mc_tab2, mc_tab3, mc_tab4 = st.tabs([
-                "📊 Payoff & Distribution", "📈 Price Paths",
-                "🔍 Path Explorer",         "🔗 Correlation Diagnostics",
+                tr("mc_subtab_payoff"), tr("mc_subtab_paths"),
+                tr("mc_subtab_explorer"), tr("mc_subtab_corr"),
             ])
 
             with mc_tab1:
-                st.subheader("IRR Distribution — All Simulated Paths")
+                st.subheader(tr("irr_dist_subheader"))
                 coupon_pa = run_terms.coupon_pa
                 st.plotly_chart(
                     build_irr_distribution(
@@ -948,18 +947,18 @@ elif st.session_state["page"] == "dashboard":
                     use_container_width=True,
                 )
                 if R["prob_knock_in_total"] > 0:
-                    st.info(f"**{R['prob_knock_in_total']:.1%}** of paths trigger the "
-                            f"knock-in barrier ({run_terms.knock_in_barrier:.0%}) at maturity.")
+                    st.info(tr("knock_in_info", pct=R['prob_knock_in_total'],
+                               barrier=run_terms.knock_in_barrier))
 
             with mc_tab2:
-                st.subheader("Simulated Price Path Fan Charts")
-                st.markdown("#### Worst-of Basket Performance")
+                st.subheader(tr("price_paths_subheader"))
+                st.markdown(tr("wof_basket_md"))
                 st.plotly_chart(
                     build_wof_fan(wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
                                   autocall_barrier=run_terms.autocall_barrier),
                     use_container_width=True,
                 )
-                st.markdown("#### Individual Underlying Paths")
+                st.markdown(tr("individual_paths_md"))
                 for i, name in enumerate(asset_names):
                     st.plotly_chart(
                         build_fan_chart(sim_prices[:, :, i], name, t_grid, obs_pairs, tr),
@@ -967,7 +966,7 @@ elif st.session_state["page"] == "dashboard":
                     )
 
             with mc_tab3:
-                st.subheader("Single Path Explorer")
+                st.subheader(tr("single_path_subheader"))
                 max_path = sim_prices.shape[0] - 1
                 pc1, pc2, pc3 = st.columns(3)
                 if pc1.button("🎲 Random"):
@@ -978,7 +977,7 @@ elif st.session_state["page"] == "dashboard":
                     st.session_state["path_num"] = min(max_path, st.session_state["path_num"] + 1)
 
                 pn = st.session_state["path_num"]
-                st.caption(f"Path #{pn} of {max_path}")
+                st.caption(tr("path_caption", n=pn, total=max_path))
                 obs_labels = [lbl for lbl, _ in obs_pairs]
 
                 path_df = pd.DataFrame(
@@ -1009,29 +1008,29 @@ elif st.session_state["page"] == "dashboard":
 
                 if autocall_q > 0:
                     t_q = obs_times_l[autocall_q - 1]
-                    st.markdown(f"### ✅ Autocalled at period {autocall_q} ({t_q:.3g}Y)")
+                    st.markdown(tr("autocalled_at_md", q=autocall_q, t=t_q))
                 elif ki:
-                    st.markdown(f"### ⚠️ Maturity — Knock-in (worst-of: {worst_f:.1%})")
+                    st.markdown(tr("maturity_knock_in_md", wof=worst_f))
                 else:
-                    st.markdown(f"### 📈 Maturity — No knock-in (worst-of: {worst_f:.1%})")
+                    st.markdown(tr("maturity_no_knock_in_md", wof=worst_f))
 
                 mc1, mc2, mc3 = st.columns(3)
-                mc1.metric("Principal", f"{principal:.2%}",
+                mc1.metric(tr("metric_principal"), f"{principal:.2%}",
                            help="Principal returned on this path as a fraction of par: 100% if "
                                 "the note autocalled or matured without a knock-in; the worst-of "
                                 "final performance if knock-in was triggered without a best-of "
                                 "rescue.")
-                mc2.metric("Coupons",   f"{coupons:.2%}",
+                mc2.metric(tr("metric_coupons"),   f"{coupons:.2%}",
                            help="Total coupon income received on this single path as a fraction "
                                 "of par, summing all paid periods (including memory catch-up "
                                 "payments if applicable).")
-                mc3.metric("IRR p.a.",  f"{irr:.2%}",
+                mc3.metric(tr("metric_irr_pa"),    f"{irr:.2%}",
                            help="Simple annualised return for this single path: "
                                 "(principal + coupons − 1) ÷ holding time. "
                                 "Short autocall paths can show very high IRRs because the same "
                                 "coupon income is divided by a small holding period.")
 
-                # Per-asset final performance
+                # Per-asset final performance with logos
                 _disp_to_sym_pe = {disp: sym for sym, disp in selected_tickers.items()}
                 _pe_cols = st.columns(len(asset_names))
                 for _pe_i, (_pe_name, _pe_col) in enumerate(zip(asset_names, _pe_cols)):
@@ -1051,7 +1050,7 @@ elif st.session_state["page"] == "dashboard":
                     _pe_col.metric("Final perf.", f"{_pe_final:.1%}")
 
             with mc_tab4:
-                st.subheader("Correlation Diagnostics")
+                st.subheader(tr("corr_diag_subheader"))
                 corr_SS       = R["corr_SS"]
                 realized_corr = R["sim_results"]["realized_corr"]
                 diff          = realized_corr - corr_SS
@@ -1070,7 +1069,7 @@ elif st.session_state["page"] == "dashboard":
                     f"try increasing Monte Carlo paths."
                 )
                 st.markdown("---")
-                st.subheader("Calibrated Heston Parameters")
+                st.subheader(tr("calib_heston_subheader"))
                 _disp_to_sym = {disp: sym for sym, disp in selected_tickers.items()}
                 rows = []
                 for p in R["params"]:
@@ -1123,9 +1122,7 @@ elif st.session_state["page"] == "dashboard":
                     "⚠️ means variance can touch zero, which is a known Heston model artefact and "
                     "generally has negligible pricing impact."
                 )
-                st.info(f"**Student-t Copula:** ν = {R.get('t_dof','N/A')} d.f. "
-                        f"(degrees of freedom; lower ν → heavier joint tails and more simultaneous "
-                        f"extreme moves across underlyings; ν > 30 approximates a Gaussian copula)")
+                st.info(tr("t_copula_dof", v=R.get('t_dof', 'N/A')))
 
             st.markdown("---")
             st.subheader("📄 Download Report")
@@ -1163,8 +1160,8 @@ elif st.session_state["page"] == "dashboard":
     # TAB 2 — HISTORICAL BACKTEST
     # ══════════════════════════════════════════════════════════════════
     with tab_bt:
-        st.header("📅 Historical Backtest")
-        st.markdown("Evaluates this note on every valid issue date using actual realized prices.")
+        st.header(tr("bt_tab_header"))
+        st.markdown(tr("bt_tab_intro"))
 
         # ── Load full price history for backtest path explorer ────────────
         # Use the same history_years that the user selected — avoids pulling
@@ -1210,10 +1207,10 @@ elif st.session_state["page"] == "dashboard":
             _min_date = _all_prices.index[0].date()
             _max_date = _all_prices.index[-_maturity_days].date()
             st.caption(
-                f"Valid issue dates: **{_min_date} → {_max_date}** "
-                f"(issues run from the start of aligned history — e.g. the latest IPO — up to "
-                f"{terms.maturity:g}Y before the end of data, so each issue has a full realized "
-                f"price path; aligned history: {_all_prices.index[0].date()} → {_all_prices.index[-1].date()})."
+                tr("bt_valid_dates_caption",
+                   start=_min_date, end=_max_date, mat=terms.maturity,
+                   hist_start=_all_prices.index[0].date(),
+                   hist_end=_all_prices.index[-1].date())
             )
 
             # ── Reset picker state when the note / data context changes ──────
@@ -1245,7 +1242,7 @@ elif st.session_state["page"] == "dashboard":
             bdc1, bdc2, bdc3 = st.columns([2, 2, 1])
             with bdc1:
                 bt_start_val = st.date_input(
-                    "Backtest start (issue dates from)",
+                    tr("bt_start_label"),
                     value=_bt_start_default,
                     min_value=_min_date,
                     max_value=_max_date,
@@ -1253,7 +1250,7 @@ elif st.session_state["page"] == "dashboard":
                 )
             with bdc2:
                 bt_end_val = st.date_input(
-                    "Backtest end (issue dates until)",
+                    tr("bt_end_label"),
                     value=_bt_end_default,
                     min_value=_min_date,
                     max_value=_max_date,
@@ -1261,13 +1258,13 @@ elif st.session_state["page"] == "dashboard":
                 )
             with bdc3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                apply_bt = st.button("Apply", key="bt_apply_btn", use_container_width=True)
+                apply_bt = st.button(tr("bt_apply_btn"), key="bt_apply_btn", use_container_width=True)
 
             # Only commit the new date range when the user clicks Apply.
             # This prevents an expensive backtest rerun on every keystroke.
             if apply_bt:
                 if bt_start_val > bt_end_val:
-                    st.warning("Backtest start is after end — range not applied.")
+                    st.warning(tr("bt_date_order_warning"))
                 else:
                     st.session_state["bt_start_default"] = bt_start_val
                     st.session_state["bt_end_default"]   = bt_end_val
@@ -1304,26 +1301,26 @@ elif st.session_state["page"] == "dashboard":
             }
 
             b1, b2, b3, b4, b5 = st.columns(5)
-            b1.metric("Issue Dates",  str(bt_summary.get("n_issues", 0)),
+            b1.metric(tr("bt_metric_issue_dates"),    str(bt_summary.get("n_issues", 0)),
                       help="Number of distinct historical issue dates tested. Each date seeds "
                            "an independent note life using the actual realized price path of "
                            "the underlyings. The backtest slides a window of length = maturity "
                            "across the full price history, one issue date per trading day.")
-            b2.metric("Mean IRR",     f"{bt_summary.get('mean_irr', 0):.2%}",
+            b2.metric(tr("bt_metric_mean_irr"),       f"{bt_summary.get('mean_irr', 0):.2%}",
                       help="Average of per-issue simple annualised returns: "
                            "mean((payout − 1) ÷ holding time). Simple annualisation — not "
                            "compound. Skewed upward by early autocalls that divide coupon "
                            "income by a short holding period.")
-            b3.metric("Median IRR",   f"{bt_summary.get('median_irr', 0):.2%}",
+            b3.metric(tr("bt_metric_median_irr"),     f"{bt_summary.get('median_irr', 0):.2%}",
                       help="Median simple annualised return across all historical issue dates. "
                            "Less sensitive than the mean to the skew introduced by very early "
                            "autocalls; a better central-tendency estimate for most note structures.")
-            b4.metric("Knock-in %",   f"{bt_summary.get('prob_knock_in', 0):.1%}",
+            b4.metric(tr("bt_metric_knock_in_pct"),   f"{bt_summary.get('prob_knock_in', 0):.1%}",
                       help="Fraction of historical issue dates where the knock-in barrier was "
                            "breached AND the final redemption condition was not met, resulting "
                            "in a capital loss. Notes with a best-of rescue clause show a lower "
                            "figure here than the raw barrier-breach rate.")
-            b5.metric("Autocalled %", f"{bt_summary.get('prob_called', 0):.1%}",
+            b5.metric(tr("bt_metric_autocalled_pct"), f"{bt_summary.get('prob_called', 0):.1%}",
                       help="Fraction of historical issue dates where the note was called early "
                            "at an autocall observation date before maturity.")
 
@@ -1341,9 +1338,8 @@ elif st.session_state["page"] == "dashboard":
             except Exception:
                 pass
 
-            st.subheader("📅 Historical Path Explorer")
-            st.caption("Select any issue date from the backtest to see the actual "
-                       "per-asset performance and worst-of path over the note's life.")
+            st.subheader(tr("bt_path_explorer_header"))
+            st.caption(tr("bt_path_explorer_caption"))
 
             issue_dates = sorted(bt["Issue Date"].unique())
 
@@ -1355,7 +1351,7 @@ elif st.session_state["page"] == "dashboard":
             _issue_idx = min(st.session_state.get("bt_issue_idx", 0), len(issue_dates) - 1)
 
             selected_issue = st.selectbox(
-                "Issue date",
+                tr("bt_issue_date_select"),
                 issue_dates,
                 index=_issue_idx,
                 format_func=lambda d: d.strftime("%Y-%m-%d"),
@@ -1365,10 +1361,9 @@ elif st.session_state["page"] == "dashboard":
             if selected_issue is not None:
                 row = bt[bt["Issue Date"] == selected_issue].iloc[0]
                 st.markdown(
-                    f"**Outcome:** {row['Outcome']} &nbsp;|&nbsp; "
-                    f"**IRR:** {row['IRR']:.2%} &nbsp;|&nbsp; "
-                    f"**Worst asset:** {row['Worst Asset']} "
-                    f"({row['Worst Final Perf']:.1%})"
+                    f"{tr('bt_outcome_label', outcome=row['Outcome'])} &nbsp;|&nbsp; "
+                    f"{tr('bt_irr_label', irr=row['IRR'])} &nbsp;|&nbsp; "
+                    f"{tr('bt_worst_asset_label', asset=row['Worst Asset'], perf=row['Worst Final Perf'])}"
                 )
                 try:
                     if _all_prices is not None:
@@ -1412,10 +1407,9 @@ elif st.session_state["page"] == "dashboard":
             _pct_elapsed = min(_elapsed_years / run_terms.maturity, 1.0)
 
             st.markdown(
-                f"**Issue date:** {_issue_ts.date()} &nbsp;·&nbsp; "
-                f"**Maturity:** {_mat_ts.date()} &nbsp;·&nbsp; "
-                f"**Elapsed:** {_elapsed_years:.2f}Y &nbsp;·&nbsp; "
-                f"**Remaining:** {max(_remaining_years, 0):.2f}Y"
+                tr("live_tab_header_md",
+                   issue=_issue_ts.date(), mat=_mat_ts.date(),
+                   elapsed=_elapsed_years, remaining=max(_remaining_years, 0))
             )
             st.progress(min(_pct_elapsed, 1.0))
 
@@ -1436,17 +1430,17 @@ elif st.session_state["page"] == "dashboard":
 
                     # ── Live summary metrics ──────────────────────────
                     _lc1, _lc2, _lc3, _lc4 = st.columns(4)
-                    _lc1.metric("Worst-of Today",  f"{_wof_today:.1%}",
-                                delta=f"{_wof_today - 1.0:.1%} vs strike",
+                    _lc1.metric(tr("live_metric_wof_today"),  f"{_wof_today:.1%}",
+                                delta=tr("live_metric_vs_strike", v=_wof_today - 1.0),
                                 help="Current level of the worst-performing underlying relative "
                                      "to its initial fixing price (strike = 100%). This is the "
                                      "key risk indicator: coupon and autocall eligibility, and "
                                      "knock-in exposure, are all measured against this figure.")
-                    _lc2.metric("Worst Asset",     _worst_asset_today,
+                    _lc2.metric(tr("live_metric_worst_asset"), _worst_asset_today,
                                 help="The underlying currently dragging the worst-of basket — "
                                      "i.e. the one with the lowest performance relative to its "
                                      "initial fixing. This asset sets the barrier observation level.")
-                    _lc3.metric("vs KI Barrier",
+                    _lc3.metric(tr("live_metric_vs_ki"),
                                 f"{_wof_today / run_terms.knock_in_barrier:.1%}",
                                 delta=f"{_wof_today - run_terms.knock_in_barrier:.1%}",
                                 delta_color="normal",
@@ -1455,7 +1449,7 @@ elif st.session_state["page"] == "dashboard":
                                      f"Values > 100% mean the worst-of is above the KI barrier "
                                      f"(no knock-in risk yet). The delta shows distance to the "
                                      f"barrier in percentage-point terms.")
-                    _lc4.metric("vs Autocall",
+                    _lc4.metric(tr("live_metric_vs_autocall"),
                                 f"{_wof_today / run_terms.autocall_barrier:.1%}",
                                 delta=f"{_wof_today - run_terms.autocall_barrier:.1%}",
                                 delta_color="normal",
@@ -1466,32 +1460,38 @@ elif st.session_state["page"] == "dashboard":
                                      f"barrier in percentage-point terms.")
 
                     # ── Per-asset current performance ─────────────────
-                    st.markdown("#### Current Asset Performance")
+                    st.markdown(tr("live_asset_perf_header"))
                     _asset_cols = st.columns(len(asset_names))
                     for _i, (_aname, _acol) in enumerate(zip(asset_names, _asset_cols)):
                         _ap = float(_perf_today[_i])
-                        _acol.metric(_aname, f"{_ap:.1%}", f"{_ap - 1.0:.1%} vs strike")
+                        _acol.metric(_aname, f"{_ap:.1%}", tr("live_metric_vs_strike", v=_ap - 1.0))
 
                     # ── Coupon status replay ──────────────────────────
-                    st.markdown("#### Observation History")
+                    st.markdown(tr("live_obs_history_header"))
                     _pending_coupons = 0
                     _total_coupons_paid = 0.0
+                    _k_period     = tr("live_col_period")
+                    _k_date       = tr("live_col_date")
+                    _k_status     = tr("live_col_status")
+                    _k_wof        = tr("live_col_wof")
+                    _k_coupon     = tr("live_col_coupon")
+                    _k_cumulative = tr("live_col_cumulative")
                     _obs_rows = []
                     for _q, (_offset, _label) in enumerate(zip(_obs_offsets, obs_labels)):
                         _obs_abs_idx = _issue_idx + _offset
                         if _obs_abs_idx >= len(_live_prices):
                             _obs_rows.append({
-                                "Period": _label, "Date": "—", "Status": "⏳ Upcoming",
-                                "Worst-of": "—", "Coupon": "—", "Cumulative": "—",
+                                _k_period: _label, _k_date: "—", _k_status: "⏳ Upcoming",
+                                _k_wof: "—", _k_coupon: "—", _k_cumulative: "—",
                             })
                             continue
                         _obs_date = _live_prices.index[_obs_abs_idx]
                         if _obs_date > _today_ts:
                             _obs_rows.append({
-                                "Period": _label,
-                                "Date": str(_obs_date.date()),
-                                "Status": "⏳ Upcoming",
-                                "Worst-of": "—", "Coupon": "—", "Cumulative": "—",
+                                _k_period: _label,
+                                _k_date: str(_obs_date.date()),
+                                _k_status: "⏳ Upcoming",
+                                _k_wof: "—", _k_coupon: "—", _k_cumulative: "—",
                             })
                             continue
                         _obs_perf = _live_prices.iloc[_obs_abs_idx].values / _S0
@@ -1512,12 +1512,12 @@ elif st.session_state["page"] == "dashboard":
                             _status = "❌ Coupon missed"
 
                         _obs_rows.append({
-                            "Period":     _label,
-                            "Date":       str(_obs_date.date()),
-                            "Status":     _status,
-                            "Worst-of":   f"{_obs_wof:.1%}",
-                            "Coupon":     f"{_period_coupon:.4%}" if _period_coupon > 0 else "—",
-                            "Cumulative": f"{_total_coupons_paid:.4%}",
+                            _k_period:     _label,
+                            _k_date:       str(_obs_date.date()),
+                            _k_status:     _status,
+                            _k_wof:        f"{_obs_wof:.1%}",
+                            _k_coupon:     f"{_period_coupon:.4%}" if _period_coupon > 0 else "—",
+                            _k_cumulative: f"{_total_coupons_paid:.4%}",
                         })
                         if _autocall_fired:
                             break
@@ -1527,13 +1527,14 @@ elif st.session_state["page"] == "dashboard":
 
                     if _pending_coupons > 0:
                         st.info(
-                            f"**{_pending_coupons} coupon(s) pending** in memory — "
-                            f"worth **{_pending_coupons * run_terms.coupon_rate:.4%}** "
-                            f"(paid when worst-of next exceeds {run_terms.coupon_barrier:.0%})."
+                            tr("live_pending_coupons_info",
+                               n=_pending_coupons,
+                               val=_pending_coupons * run_terms.coupon_rate,
+                               barrier=run_terms.coupon_barrier)
                         )
 
                     _irr_to_date = _total_coupons_paid / max(_elapsed_years, 1/252)
-                    st.metric("Coupon IRR to date (annualised)", f"{_irr_to_date:.2%}",
+                    st.metric(tr("live_coupon_irr_metric"), f"{_irr_to_date:.2%}",
                               help="Total coupons paid so far ÷ elapsed time in years — a simple "
                                    "(not compound) annualisation of income received. Does not "
                                    "include any accrued-but-unpaid memory coupons or the principal "
