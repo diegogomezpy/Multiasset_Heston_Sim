@@ -231,11 +231,12 @@ def build_fan_chart(
 # ---------------------------------------------------------------------------
 
 def build_wof_fan(
-    worst_of_paths: np.ndarray,
-    t_grid:         np.ndarray,
-    floor_level:    float,
-    obs_labels:     list[tuple[str, float]],
-    tr:             Translator,
+    worst_of_paths:   np.ndarray,
+    t_grid:           np.ndarray,
+    knock_in_barrier: float,
+    obs_labels:       list[tuple[str, float]],
+    tr:               Translator,
+    autocall_barrier: float | None = None,
 ) -> go.Figure:
     pcts = [5, 25, 50, 75, 95]
     bands = np.percentile(worst_of_paths, pcts, axis=0)
@@ -259,10 +260,16 @@ def build_wof_fan(
         line=dict(color=_GREEN_MID, width=2),
     ))
     fig.add_hline(
-        y=floor_level, line_dash="dash", line_color=_RED,
-        annotation_text=f"Floor / Call Strike ({floor_level:.0%})",
+        y=knock_in_barrier, line_dash="dash", line_color=_RED,
+        annotation_text=f"Knock-in barrier ({knock_in_barrier:.0%})",
         annotation_position="bottom right",
     )
+    if autocall_barrier is not None:
+        fig.add_hline(
+            y=autocall_barrier, line_dash="dot", line_color=_GREY,
+            annotation_text=f"Autocall barrier ({autocall_barrier:.0%})",
+            annotation_position="top right",
+        )
     for label, t_val in obs_labels:
         fig.add_vline(x=t_val, line_dash="dot", line_color="#aaa",
                       annotation_text=label, annotation_position="top")
@@ -303,15 +310,16 @@ def build_path_price_chart(
 
 
 def build_path_wof_chart(
-    worst_path:      np.ndarray,
-    autocall_q:      int,
-    obs_steps:       list[int],
-    obs_labels:      list[str],
-    floor_level:     float,
-    path_num:        int,
-    tr:              Translator,
-    asset_paths:     np.ndarray | None = None,   # (N+1, n_assets) optional
-    asset_names:     list[str] | None  = None,
+    worst_path:       np.ndarray,
+    autocall_q:       int,
+    obs_steps:        list[int],
+    obs_labels:       list[str],
+    knock_in_barrier: float,
+    path_num:         int,
+    tr:               Translator,
+    asset_paths:      np.ndarray | None = None,
+    asset_names:      list[str]  | None = None,
+    autocall_barrier: float | None      = None,
 ) -> go.Figure:
     asset_colors = [_GREEN_MID, _GREEN_LIGHT, _GREEN_DARK, "#f39c12", "#9b59b6"]
     fig = go.Figure()
@@ -331,10 +339,16 @@ def build_path_wof_chart(
         line=dict(color=_GREEN_DARK, width=2.5),
     ))
     fig.add_hline(
-        y=floor_level, line_dash="dash", line_color=_RED,
-        annotation_text=f"Call Strike / Floor ({floor_level:.0%})",
+        y=knock_in_barrier, line_dash="dash", line_color=_RED,
+        annotation_text=f"Knock-in barrier ({knock_in_barrier:.0%})",
         annotation_position="bottom right",
     )
+    if autocall_barrier is not None:
+        fig.add_hline(
+            y=autocall_barrier, line_dash="dot", line_color=_GREY,
+            annotation_text=f"Autocall barrier ({autocall_barrier:.0%})",
+            annotation_position="top right",
+        )
     for i, (step, label) in enumerate(zip(obs_steps, obs_labels)):
         called_here  = (autocall_q == i + 1)
         marker_color = _GREEN_MID if called_here else _GREY
@@ -498,14 +512,15 @@ def build_historical_prices(
 # ---------------------------------------------------------------------------
 
 def build_historical_wof_path(
-    hist_prices:   pd.DataFrame,
-    issue_date:    pd.Timestamp,
-    maturity_days: int,
-    obs_day_offsets: list[int],
+    hist_prices:      pd.DataFrame,
+    issue_date:       pd.Timestamp,
+    maturity_days:    int,
+    obs_day_offsets:  list[int],
     knock_in_barrier: float,
     autocall_barrier: float,
-    call_quarter:  int,             # 0 = maturity, else period number
-    tr:            Translator,
+    coupon_barrier:   float,
+    call_quarter:     int,
+    tr:               Translator,
 ) -> go.Figure:
     """
     Show per-asset performance + worst-of line for one historical issue date.
@@ -559,7 +574,7 @@ def build_historical_wof_path(
         obs_date = dates[obs_idx_local]
         wof_val  = float(wof[obs_idx_local])
         is_call  = (call_quarter == q + 1)
-        color    = _GREEN_MID if wof_val >= knock_in_barrier else _RED
+        color    = _GREEN_MID if wof_val >= coupon_barrier else _RED
         symbol   = "star" if is_call else "circle"
         size     = 14 if is_call else 9
         label    = f"P{q+1} {'← CALLED' if is_call else ''}"

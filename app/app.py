@@ -242,7 +242,10 @@ if st.session_state["page"] == "setup":
     ]
 
     # Default: session state override (from JSON) or fallback
-    default_ul = st.session_state["setup_ul_default"] or                  ["SPX — S&P 500", "SX5E — Euro Stoxx 50", "SMI — Swiss Market"]
+    default_ul = (
+        st.session_state["setup_ul_default"]
+        or ["SPX — S&P 500", "SX5E — Euro Stoxx 50", "SMI — Swiss Market"]
+    )
     # Filter to only valid options
     default_ul = [d for d in default_ul if d in all_labels]
 
@@ -744,7 +747,8 @@ elif st.session_state["page"] == "dashboard":
                 st.subheader("Simulated Price Path Fan Charts")
                 st.markdown("#### Worst-of Basket Performance")
                 st.plotly_chart(
-                    build_wof_fan(wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr),
+                    build_wof_fan(wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
+                                  autocall_barrier=run_terms.autocall_barrier),
                     use_container_width=True,
                 )
                 st.markdown("#### Individual Underlying Paths")
@@ -784,6 +788,7 @@ elif st.session_state["page"] == "dashboard":
                         wof_paths[pn], autocall_q, obs_steps_i, obs_labels,
                         run_terms.knock_in_barrier, pn, tr,
                         asset_paths=asset_perf_pn, asset_names=asset_names,
+                        autocall_barrier=run_terms.autocall_barrier,
                     ),
                     use_container_width=True,
                 )
@@ -1044,6 +1049,7 @@ elif st.session_state["page"] == "dashboard":
                                 obs_day_offsets   = obs_day_offsets,
                                 knock_in_barrier  = terms.knock_in_barrier,
                                 autocall_barrier  = terms.autocall_barrier,
+                                coupon_barrier    = terms.coupon_barrier,
                                 call_quarter      = int(row["Call Quarter"]),
                                 tr                = tr,
                             ),
@@ -1061,8 +1067,8 @@ elif st.session_state["page"] == "dashboard":
             import datetime as _dt
             _issue_ts  = pd.Timestamp(run_terms.issue_date)
             _today_ts  = pd.Timestamp(_dt.date.today())
-            _mat_ts    = _issue_ts + pd.Timedelta(days=round(run_terms.maturity * 365.25))
             _mat_days  = round(run_terms.maturity * 252)
+            _mat_ts    = _issue_ts + pd.offsets.BDay(_mat_days)
             _obs_offsets = [round(t / run_terms.maturity * _mat_days) for t in obs_times_l]
 
             # How far through the note's life are we?

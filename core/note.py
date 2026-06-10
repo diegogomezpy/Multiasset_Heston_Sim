@@ -26,6 +26,7 @@ Key features
 from __future__ import annotations
 
 import json
+import warnings
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Literal
@@ -96,8 +97,8 @@ class NoteTerms:
     final_redemption_barrier: float     = 1.00   # 'rescue' level for the final basket (see price_note)
     call_steepness:         float | None = None   # None = hard trigger (default)
     name:                   str         = "Phoenix Memory Note"
-    tickers:                dict        = None
-    issue_date:             str         = None   # "YYYY-MM-DD" — enables Current Performance tab
+    tickers:                dict | None  = None
+    issue_date:             str  | None = None   # "YYYY-MM-DD" — enables Current Performance tab
 
     def __post_init__(self):
         if self.tickers is None:
@@ -105,6 +106,10 @@ class NoteTerms:
         if self.payment_freq not in _FREQ_TO_PERIODS:
             raise ValueError(
                 f"payment_freq must be one of {list(_FREQ_TO_PERIODS)}; got '{self.payment_freq}'"
+            )
+        if self.autocall_start_period < 1:
+            raise ValueError(
+                f"autocall_start_period must be >= 1 (1-indexed); got {self.autocall_start_period}"
             )
 
     # ------------------------------------------------------------------
@@ -217,7 +222,15 @@ class NoteTerms:
             coupon_rate = float(d.pop("coupon_rate", 0.025))
             d["coupon_pa"] = coupon_rate * _FREQ_TO_PERIODS[freq]
 
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        known   = cls.__dataclass_fields__
+        unknown = [k for k in d if k not in known]
+        if unknown:
+            warnings.warn(
+                f"NoteTerms.from_dict: ignoring unrecognised keys {unknown}. "
+                "Check for typos in your JSON config.",
+                stacklevel=2,
+            )
+        return cls(**{k: v for k, v in d.items() if k in known})
 
     @classmethod
     def from_json(cls, json_str: str) -> "NoteTerms":
@@ -492,9 +505,6 @@ def price_note(
         "prob_barrier_event":       float(be_total.mean()),   # incl. paths rescued by final condition
         "prob_rescued":             float((be_total & ~ki_total).mean()),
 
-        # Legacy aliases
+        # Legacy alias
         "prob_floor":               float(ki_total.mean()),
-        "prob_q1":  float((autocall_period == 1).mean()),
-        "prob_q2":  float((autocall_period == 2).mean()),
-        "prob_q3":  float((autocall_period == 3).mean()),
     }
