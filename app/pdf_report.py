@@ -687,6 +687,75 @@ class _NotePDF(FPDF):
         self.set_line_width(0.2)
         self.line(self.l_margin, self.get_y(),
                   self.l_margin + sum(col_widths), self.get_y())
+
+    def logo_row_table(self, headers: list[str], rows: list[list[str]],
+                       logos: dict, col_widths: list[float] | None = None,
+                       aligns: list[str] | None = None):
+        """Like data_table but draws a small inline ticker logo to the left of the
+        first-column name. `rows[i][0]` is the asset name and `logos[name]` its
+        PNG bytes (or None). Mirrors the calibration table's inline-logo style."""
+        n = len(headers)
+        usable = self.w - self.l_margin - self.r_margin
+        if col_widths is None:
+            col_widths = [usable / n] * n
+        if aligns is None:
+            aligns = ["L"] + ["R"] * (n - 1)
+        LW = LH = 6.0
+        ROW_H = 8.0
+
+        def _header_row():
+            self.set_fill_color(*self.primary_color)
+            self.set_text_color(*_WHITE)
+            self._sf(7.5, "semibold")
+            for h, w, a in zip(headers, col_widths, aligns):
+                self.cell(w, 7, f" {h} ", border=0, fill=True, align=a)
+            self.ln()
+            self.set_draw_color(*self.accent_color)
+            self.set_line_width(0.25)
+            self.line(self.l_margin, self.get_y(),
+                      self.l_margin + sum(col_widths), self.get_y())
+            self.set_text_color(*_TEXT)
+            self._sf(8, "regular")
+
+        if self.get_y() > self.h - 55:
+            self.add_page()
+        _header_row()
+
+        for i, row in enumerate(rows):
+            if self.get_y() > self.h - 30:
+                self.add_page()
+                _header_row()
+            name = str(row[0])
+            fill = _ROW_ALT if i % 2 == 0 else _WHITE
+            row_y = self.get_y()
+            # First column: zebra fill, inline logo, then name
+            self.set_fill_color(*fill)
+            self.rect(self.l_margin, row_y, col_widths[0], ROW_H, style="F")
+            ldata = (logos or {}).get(name)
+            text_x = self.l_margin + 2
+            if ldata:
+                try:
+                    self.image(io.BytesIO(ldata), x=self.l_margin + 1,
+                               y=row_y + (ROW_H - LH) / 2, w=LW, h=LH)
+                    text_x = self.l_margin + LW + 3
+                except Exception:
+                    pass
+            self.set_xy(text_x, row_y + (ROW_H - 4) / 2)
+            self._sf(8, "semibold")
+            self.set_text_color(*_TEXT)
+            self.cell(col_widths[0] - (text_x - self.l_margin) - 1, 4, self._safe(name))
+            # Remaining columns
+            self._sf(8, "regular")
+            self.set_xy(self.l_margin + col_widths[0], row_y)
+            for cell_val, w, a in zip(row[1:], col_widths[1:], aligns[1:]):
+                self.set_fill_color(*fill)
+                self.cell(w, ROW_H, f" {cell_val} ", border=0, fill=True, align=a)
+            self.set_y(row_y + ROW_H)
+
+        self.set_draw_color(*_HAIRLINE)
+        self.set_line_width(0.2)
+        self.line(self.l_margin, self.get_y(),
+                  self.l_margin + sum(col_widths), self.get_y())
         self.ln(4)
 
     def metric_band(self, metrics: list[tuple[str, str]]):
@@ -1027,16 +1096,22 @@ def _load_ticker_logo(display_name: str, url: str | None,
 
 # ── Branded recolouring ───────────────────────────────────────────────────────
 # The app charts (app/charts.py) are built on a fixed navy/blue palette. For the
-# PDF we remap *only that known source palette* onto the branding colours, so a
-# CADIEM report comes out green while a default report stays navy/blue. The remap
-# is keyed on exact source values, so semantic colours not in the map (red KI
-# line, grey autocall line, orange coupon line, white) pass through untouched,
-# and the fan-chart band hierarchy is preserved (both bands share the accent RGB
-# but keep their distinct 0.08 vs 0.20 alpha).
-_SRC_NAVY  = (26, 46, 74)     # #1a2e4a  worst-of line / maturity bars / dark series
+# PDF we remap that known source palette onto a BRANDED palette that pairs the
+# firm's brand colour with a complementary warm gold, so charts read as branded
+# yet are not monochrome (a green report gets green data series + gold contrast).
+# The remap is keyed on exact source values, so semantic colours not in the map
+# (red KI line, grey autocall line, orange coupon line, white) pass through
+# untouched, and the fan-chart band hierarchy is preserved (both bands share the
+# brand RGB but keep their distinct 0.08 vs 0.20 alpha). Categorical blue-ramp
+# colours (the backtest's hsl(217,…) autocall periods) are hue-rotated to a green
+# ramp; the correlation heat-scale endpoint is kept in the brand colour via a
+# separate scale map so the heatmap stays on-brand rather than going gold.
+_SRC_NAVY  = (26, 46, 74)     # #1a2e4a  maturity bars / dark "second category"
 _SRC_BLUE  = (37, 99, 235)    # #2563eb  median / mean line / primary series / band fills
 _SRC_LIGHT = (96, 165, 250)   # #60a5fa  autocalled bars / light secondary series
 _SRC_EXTRA = {(8, 145, 178), (124, 58, 237), (13, 148, 136)}  # >3-asset series colours
+_BRAND_GOLD = (198, 148, 38)  # #C69426  warm institutional gold — complementary accent
+_GREEN_RAMP_HUE = 150         # target hue for hsl blue-ramp rotation (CADIEM green family)
 
 
 def _blend(rgb: tuple, target: tuple, f: float) -> tuple:
@@ -1044,17 +1119,31 @@ def _blend(rgb: tuple, target: tuple, f: float) -> tuple:
 
 
 def _build_color_remap(primary: tuple, accent: tuple) -> dict:
-    """RGB-tuple -> RGB-tuple map from the charts.py source palette to branding."""
+    """Series/marker map: charts.py source palette -> brand green + gold accent.
+
+    SEMANTIC COLOURS ALWAYS WIN over branding: red (#dc2626) = loss / knock-in /
+    danger and the green "good outcome" series are intentionally handled so that
+    bad things stay red and good things stay (brand) green regardless of the firm
+    palette. Red/orange/grey are NOT in this map, so they pass through untouched;
+    the gold accent is only ever assigned to the *neutral* second category
+    (held-to-maturity), never to a loss or a gain. Do not add red/green semantic
+    hexes as remap keys."""
     white = (255, 255, 255)
     extras = list(_SRC_EXTRA)
     return {
-        _SRC_NAVY:  primary,
-        _SRC_BLUE:  accent,
-        _SRC_LIGHT: _blend(accent, white, 0.45),
-        extras[0]:  _blend(accent, white, 0.25),
-        extras[1]:  _blend(primary, white, 0.30),
-        extras[2]:  _blend(accent, primary, 0.50),
+        _SRC_BLUE:  accent,                       # hero series / median / mean
+        _SRC_NAVY:  _BRAND_GOLD,                  # second category (maturity) -> gold
+        _SRC_LIGHT: _blend(accent, white, 0.45),  # light series / autocalled bars
+        extras[0]:  _blend(_BRAND_GOLD, white, 0.40),
+        extras[1]:  primary,
+        extras[2]:  _BRAND_GOLD,
     }
+
+
+def _build_scale_remap(primary: tuple, accent: tuple) -> dict:
+    """Colour-scale map (heatmaps): keep the intensity ramp on-brand (green),
+    never gold — the navy/blue endpoints map to the brand, red stays red."""
+    return {_SRC_NAVY: primary, _SRC_BLUE: accent}
 
 
 def _parse_rgb(c: str):
@@ -1081,8 +1170,17 @@ def _parse_rgb(c: str):
 
 
 def _remap_color(c, remap: dict):
-    """Map one colour through the branding remap, preserving any alpha. Colours
-    whose RGB isn't a known source palette value are returned unchanged."""
+    """Map one colour through a branding remap, preserving any alpha. Blue-family
+    hsl() colours (the backtest autocall ramp) are hue-rotated to a green ramp;
+    colours whose RGB isn't a known source value are returned unchanged."""
+    if isinstance(c, str):
+        h = re.match(r"hsl\(\s*(\d+(?:\.\d+)?)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)",
+                     c.strip().lower())
+        if h:
+            hue = float(h.group(1))
+            if 195 <= hue <= 255:   # blue family -> brand-green ramp
+                return f"hsl({_GREEN_RAMP_HUE},{h.group(2)}%,{h.group(3)}%)"
+            return c
     p = _parse_rgb(c)
     if p is None:
         return c
@@ -1101,7 +1199,9 @@ def _rebrand_figure(fig, primary: tuple, accent: tuple):
     if primary == _SRC_NAVY and accent == _SRC_BLUE:
         return
     remap = _build_color_remap(primary, accent)
-    rc = lambda c: _remap_color(c, remap)
+    scale = _build_scale_remap(primary, accent)
+    rc = lambda c: _remap_color(c, remap)   # series / marker colours (green + gold)
+    sc = lambda c: _remap_color(c, scale)   # intensity scales (stay brand green)
     try:
         if getattr(fig.layout, "colorway", None):
             fig.layout.colorway = tuple(rc(c) for c in fig.layout.colorway)
@@ -1123,11 +1223,11 @@ def _rebrand_figure(fig, primary: tuple, accent: tuple):
                     setattr(obj, parts[-1], rc(val))
             except Exception:
                 pass
-        # Heatmap / continuous colorscale: [(pos, color), ...]
+        # Heatmap / continuous colorscale: [(pos, color), ...] — use the scale map.
         try:
             cs = getattr(tr, "colorscale", None)
             if cs:
-                tr.colorscale = tuple((pos, rc(col)) for pos, col in cs)
+                tr.colorscale = tuple((pos, sc(col)) for pos, col in cs)
         except Exception:
             pass
     # add_vline / add_hline (e.g. the mean / expected-IRR line) are layout
@@ -1143,11 +1243,11 @@ def _rebrand_figure(fig, primary: tuple, accent: tuple):
     except Exception:
         pass
     # px.imshow heatmaps keep their colourscale on layout.coloraxis, not on the
-    # trace — remap the navy endpoint of the correlation scale to the brand.
+    # trace — remap the navy endpoint to the brand colour (scale map, not gold).
     try:
         cax = fig.layout.coloraxis
         if cax is not None and getattr(cax, "colorscale", None):
-            cax.colorscale = tuple((pos, rc(col)) for pos, col in cax.colorscale)
+            cax.colorscale = tuple((pos, sc(col)) for pos, col in cax.colorscale)
     except Exception:
         pass
 
@@ -1838,9 +1938,15 @@ def generate_pdf_report(
         perf_today = live_data.get("perf_today", {})
         if perf_today:
             pdf.subsection(_t("live_asset_perf", lang))
-            pdf.data_table(
+            _perf_logos = {
+                nm: _load_ticker_logo(nm, (logo_urls or {}).get(nm, ""),
+                                      (logo_tickers or {}).get(nm))
+                for nm in perf_today
+            }
+            pdf.logo_row_table(
                 [_t("asset", lang), _t("performance", lang)],
                 [[name, f"{perf:.2%}"] for name, perf in perf_today.items()],
+                _perf_logos,
                 col_widths=[usable * 0.5, usable * 0.5],
                 aligns=["L", "R"],
             )
