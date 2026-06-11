@@ -43,10 +43,17 @@ Thumbs.db
 *.pdf
 heston_multi_diagnostics.png
 
-# Branding logo assets are required inputs for the PDF report, not generated
-# output — keep them tracked despite the blanket *.png ignore above.
-!branding/**/*.png
-!branding/*.png
+# Ticker/underlying logos are required inputs for the PDF, not generated output —
+# keep them tracked despite the blanket *.png ignore above. Firm logos live in
+# the branding root and are NOT tracked (see the firm-branding rule below).
+!branding/ticker_logos/*.png
+
+# ── Firm branding is kept LOCAL (real-company identity, never published) ──
+# Only the generic Acme example template is tracked; a firm's own branding
+# config + logo live in the working tree (gitignored) so they never reach the
+# public repo. Drop your branding_<firm>.json here and it stays local.
+branding/branding_*.json
+!branding/branding_example.json
 
 # ── Data — CSVs are not tracked; data is pulled live from yfinance ──
 data/*.csv
