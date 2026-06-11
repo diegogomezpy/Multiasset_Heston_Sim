@@ -262,83 +262,64 @@ places.
 - **`.venv/bin/pip` has a broken shebang** (points at the old
   `Multiasset_Heston_Sim` path) — use `.venv/bin/python -m pip`.
 
-## New note structures
+## Note structures beyond Phoenix (implemented)
+
+Both payoffs below are **implemented in `core/note.py:price_note()` and shipped as
+configs** — this section documents the live behaviour, not a wishlist. The two
+extra fields each is gated on default to a no-op so plain Phoenix notes are
+unaffected.
+
+To disable the Phoenix machinery these structures don't use, the shipped configs
+set `coupon_pa: 0.0`, `coupon_barrier: 0.0` (guaranteed-but-zero, so no coupon
+ever pays), and `autocall_barrier: 2.0` (200% — unreachable, so the note never
+autocalls). `autocall_start_period` can stay `1`.
 
 ### Bonus Certificate / European Barrier Note with Floor Return
 
-Seen in PUENTE product shelf (e.g. MELI/ORCL/META, 12M, 29% floor, 40% KI protection).
+Shipped as `note_configs/puente_mayo_bonus_meli_orcl_meta.json` (PUENTE Mayo,
+MELI/ORCL/META, 1Y, 29% floor, 60% European KI).
 
-Payoff at maturity:
-- If worst-of(T) ≥ knock_in_barrier (European, measured at maturity only):  `max(worst-of performance, 1 + min_return)`
-- If worst-of(T) < knock_in_barrier: `worst-of performance` (1:1 loss below barrier)
+Payoff at maturity (no autocall, no periodic coupons):
+- worst-of(T) ≥ `knock_in_barrier` (European, measured at maturity only): `max(worst-of performance, 1 + min_return)` — full upside with a guaranteed floor.
+- worst-of(T) < `knock_in_barrier`: `worst-of performance` (1:1 loss below barrier).
 
-No autocall, no periodic coupons. New `NoteTerms` fields needed:
-- `min_return` (float, e.g. `0.29`): guaranteed minimum return above barrier. Default `0.0` = no floor (standard Phoenix behaviour unaffected).
-- `upside_participation` (float, default `1.0`): fraction of worst-of upside above min_return. Always 100% in observed structures.
-
-`price_note()` change: in the final-step redemption block, replace `pay_par` (1.0) with `max(basket_final, 1 + terms.min_return)` when `min_return > 0` and KI not breached. Single `if` branch; no other payoff logic changes.
-
-JSON config example:
-```json
-{
-  "name": "PUENTE Mayo Bonus MELI/ORCL/META",
-  "maturity": 1.0,
-  "payment_freq": "annual",
-  "coupon_pa": 0.0,
-  "coupon_barrier": 1.1,
-  "autocall_barrier": 99.0,
-  "autocall_start_period": 99,
-  "knock_in_barrier": 0.60,
-  "memory": false,
-  "coupon_basket": "worst_of",
-  "autocall_basket": "worst_of",
-  "final_basket": "worst_of",
-  "final_redemption_barrier": 1.0,
-  "min_return": 0.29,
-  "tickers": {"MELI": "MELI", "ORCL": "ORCL", "META": "META"}
-}
-```
-(Set `coupon_barrier` and `autocall_barrier` impossibly high to disable periodic coupons and autocall effectively; `min_return: 0.29` triggers the floor logic.)
+Field: **`min_return`** (float, default `0.0` = no floor). In `price_note()` the
+final-step redemption uses `protected_redemption = np.maximum(worst_final, 1.0 +
+terms.min_return)` when `min_return > 0` and KI is not breached; capital-loss
+paths take the standard 1:1 downside unchanged. There is no separate
+participation field — upside participation is always 100%.
 
 ### Capital Protected Participation Note (capped upside, guaranteed floor)
 
-Seen in PUENTE product shelf (e.g. NU/MELI, 18M, 100%/95% capital guarantee + 15%/30% CAP).
+Shipped as `note_configs/puente_junio_capital_garantizado_optionA.json`
+(100% floor + 15% cap) and `…_optionB.json` (95% floor + 30% cap) — PUENTE Junio,
+NU/MELI, 1.5Y.
 
 Payoff at maturity (no KI, no autocall, no periodic coupons):
-`max(capital_guarantee, min(1 + worst-of return, 1 + upside_cap))`
+`np.clip(worst-of(T), capital_guarantee, 1 + upside_cap)`
 
-New `NoteTerms` fields needed:
-- `capital_guarantee` (float, e.g. `1.0` or `0.95`): floor on redemption. Default `null` = not a capital-protected note.
-- `upside_cap` (float, e.g. `0.15` or `0.30`): ceiling on participation return. Default `null` = no cap.
-- `min_return` (float): reuse from Bonus Certificate above; set `= capital_guarantee - 1` for unified logic.
-
-`price_note()` change: add a new payoff branch triggered by `terms.capital_guarantee is not None`. In this branch skip all autocall/coupon logic entirely; final payoff = `np.clip(basket_final, terms.capital_guarantee, 1 + terms.upside_cap)`.
-
-JSON config example (Option A: 100% floor + 15% CAP):
-```json
-{
-  "name": "PUENTE Junio Capital Garantizado NU/MELI - Opcion A",
-  "maturity": 1.5,
-  "payment_freq": "annual",
-  "coupon_pa": 0.0,
-  "coupon_barrier": 1.1,
-  "autocall_barrier": 99.0,
-  "autocall_start_period": 99,
-  "knock_in_barrier": 1.1,
-  "memory": false,
-  "coupon_basket": "worst_of",
-  "autocall_basket": "worst_of",
-  "final_basket": "worst_of",
-  "final_redemption_barrier": 1.0,
-  "capital_guarantee": 1.0,
-  "upside_cap": 0.15,
-  "tickers": {"NU": "NU", "MELI": "MELI"}
-}
-```
+Fields: **`capital_guarantee`** (float | null, default `null`) and **`upside_cap`**
+(float | null, default `null`). `price_note()` has a dedicated early-return
+branch gated on `terms.capital_guarantee is not None` that skips the entire
+Phoenix waterfall (no autocall, coupon, or KI logic) and returns the clipped
+worst-of payoff; `upside_cap = None` means an uncapped ceiling (`+inf`).
 
 ## Repo audit (2026-06-11): structure, branding contract, dead code, performance
 
-Findings only — none of these are fixed yet. Ranked within each group by impact.
+Ranked within each group by impact.
+
+**Resolution (2026-06-11, same-day fix pass):** all targeted fixes below were
+applied and verified — branding contract **B1–B5**, performance **P1–P6**, dead
+code **D1–D8**, and doc rot **S4–S5**. The large structural refactors **S1**
+(unify the two i18n systems), **S2** (split the ~2000-line `pdf_report.py` /
+~1830-line `app.py` into packages) and **S3** (shared logo module) were
+deliberately **deferred** — they churn every file the fixes touch and the repo
+has no test suite to catch a regression. They remain open below as the next
+pass. Verification: `py_compile` across the tree, the engine smoke test, a
+headless `AppTest` setup+dashboard run (confirming the P1 session-state shape and
+float32 paths), the branding-rebrand unit checks, and the `scripts/verify_pdf.py`
+en+es render. The findings below are kept verbatim as the record of what was
+found; the deferred S1–S3 entries are the live backlog.
 
 ### Branding config — the contract is ad hoc, tuned for CADIEM
 
