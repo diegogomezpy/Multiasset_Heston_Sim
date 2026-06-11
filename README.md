@@ -4,6 +4,8 @@ A Python framework for calibrating, simulating, and pricing a **multi-asset Hest
 
 Built as an internal tool and deployed as an interactive dashboard.
 
+**▶️ Live app: [structurednotesim.streamlit.app](https://structurednotesim.streamlit.app/)**
+
 ---
 
 ## Overview
@@ -325,19 +327,61 @@ After confirming setup the dashboard shows:
 
 ---
 
+## Deployment
+
+The app is hosted on **Streamlit Community Cloud** at
+[structurednotesim.streamlit.app](https://structurednotesim.streamlit.app/),
+auto-redeploying from `main` on every push. Notes on running it reliably
+long-term:
+
+- **`requirements.txt` is pinned** with upper bounds so a future rebuild on the
+  cloud can't silently pull a breaking major release. Bump versions
+  deliberately and re-pin.
+- **`yfinance` is the single point of failure.** All live data flows through it,
+  and Yahoo periodically changes its undocumented endpoints, breaking yfinance
+  until it's patched. If the app starts failing to load prices, bump `yfinance`
+  first (`pip install -U yfinance`) and re-pin. Data-load failures surface as a
+  clean in-app message (with a retry hint), not a traceback.
+- **Path-count ceiling for memory.** MC peak memory scales with
+  `n_paths × n_steps × n_assets`; on the free tier (~1 GB) a 50K-path multi-year
+  note can OOM the container. The "Monte Carlo paths" slider is therefore capped
+  at **15,000 on Streamlit Cloud** (auto-detected) and **50,000 locally**.
+  Override the ceiling with the **`SNSIM_MAX_PATHS`** environment variable (set
+  it under *Manage app → Settings → Secrets/Advanced* on the cloud).
+- **Cold starts:** the Community Cloud instance sleeps after inactivity; the
+  first visitor waits ~30 s for it to wake. This is expected, not a failure.
+
+```bash
+# local run
+pip install -r requirements.txt
+streamlit run app/app.py
+
+# local run with a tighter path cap (e.g. on a low-memory machine)
+SNSIM_MAX_PATHS=8000 streamlit run app/app.py
+```
+
+---
+
 ## Dependencies
 
+Pinned in `requirements.txt` with upper bounds, so a future rebuild can't pull
+an incompatible major release (see [Deployment](#deployment)):
+
 ```
-numpy >= 1.26, < 3
-pandas >= 2.0, < 4
-scipy >= 1.11
-matplotlib >= 3.7
-plotly >= 5.18
-yfinance >= 0.2
-streamlit >= 1.30
-fpdf2 >= 2.7        # PDF report
-kaleido >= 0.2      # Plotly figure export for the PDF
+numpy >= 2.4, < 3
+pandas >= 3.0, < 4
+scipy >= 1.17, < 2
+matplotlib >= 3.7, < 4   # notebook-only; lazy-imported, never loaded by the app
+plotly >= 6.8, < 7
+yfinance >= 1.4, < 2     # most fragile dep — bump first if live data stops loading
+streamlit >= 1.58, < 2
+fpdf2 >= 2.8, < 3        # PDF report
+kaleido >= 1.3, < 2      # Plotly figure export for the PDF
+Pillow >= 12, < 13       # logo handling in the PDF
 ```
+
+`PyMuPDF` is **not** a runtime dependency — it is only used by
+`scripts/verify_pdf.py` to rasterise PDFs for eyeballing. Install it ad hoc.
 
 ---
 

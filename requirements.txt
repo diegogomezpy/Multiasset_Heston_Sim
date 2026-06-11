@@ -1,18 +1,31 @@
+# Pinned for reproducible cloud deploys. Lower bound = the version this app was
+# verified against; upper bound = next major, to block a surprise breaking
+# release on a future rebuild. Bump deliberately, not by accident.
+#
+# yfinance is the most fragile dep: Yahoo periodically changes its undocumented
+# endpoints and yfinance breaks until patched. If live data stops loading,
+# bump yfinance FIRST (`pip install -U yfinance`) and re-pin here.
+
 # Core numerical stack
-numpy>=1.26,<3
-pandas>=2.0,<4
-scipy>=1.11
+numpy>=2.4,<3
+pandas>=3.0,<4
+scipy>=1.17,<2
 
 # Visualisation
-matplotlib>=3.7
-plotly>=5.18
+matplotlib>=3.7,<4   # notebook-only (core.simulator.plot); lazy-imported, never loaded by the app
+plotly>=6.8,<7
 
 # Market data
-yfinance>=0.2
+yfinance>=1.4,<2
 
 # Dashboard
-streamlit>=1.30
+streamlit>=1.58,<2
 
 # PDF report (fpdf2 builds the document; kaleido exports Plotly figures to PNG)
-fpdf2>=2.7
-kaleido>=0.2
+fpdf2>=2.8,<3
+kaleido>=1.3,<2
+Pillow>=12,<13
+
+# PyMuPDF (fitz) is NOT a runtime dep — it's only used by scripts/verify_pdf.py
+# to rasterise PDFs for eyeballing. Install it ad hoc for verification:
+#   pip install "PyMuPDF>=1.27,<2"

@@ -3,6 +3,7 @@ app/app.py  —  Streamlit entry point.
 Run with:  streamlit run app/app.py
 """
 
+import os
 import random
 import sys
 import pathlib
@@ -13,6 +14,15 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 if str(_APP) not in sys.path:
     sys.path.insert(0, str(_APP))
+
+# ── Path-count ceiling ───────────────────────────────────────────────────────
+# The MC peak memory scales with n_paths × n_steps × n_assets. On Streamlit
+# Community Cloud (~1 GB), a 50K-path 5Y note can OOM-kill the container. Cap
+# the slider on the hosted instance; allow the full range locally.
+# Override explicitly with the SNSIM_MAX_PATHS env var (set it in the app's
+# "Advanced settings → Secrets/env" on Streamlit Cloud to tune the ceiling).
+_ON_STREAMLIT_CLOUD = os.getcwd().startswith("/mount/src") or "STREAMLIT_CLOUD" in os.environ
+_MAX_PATHS = int(os.environ.get("SNSIM_MAX_PATHS", 15000 if _ON_STREAMLIT_CLOUD else 50000))
 
 import numpy as np
 import pandas as pd
@@ -284,6 +294,19 @@ def _run_backtest_cached(tickers_tuple, terms_json,
 lang_choice = st.sidebar.radio("Language / Idioma", ["English", "Español"],
                                 horizontal=True)
 tr = Translator("es" if lang_choice == "Español" else "en")
+
+
+def _safe_load_prices(tickers_tuple, **kw):
+    """Wrap _load_prices so a Yahoo outage shows a clean message and halts the
+    run, instead of surfacing a raw traceback to the user. The underlying
+    load_prices already raises a friendly ValueError on empty/rate-limited
+    responses; we render it and st.stop() to abort this script run cleanly."""
+    try:
+        return _load_prices(tickers_tuple, **kw)
+    except Exception as exc:  # noqa: BLE001 — any data-layer failure is user-facing
+        st.error(tr("data_load_error", msg=str(exc)))
+        st.info(tr("data_load_retry"))
+        st.stop()
 
 # ==========================================================================
 # ─────────────────────────────────────────────────────────────────────────
@@ -661,8 +684,8 @@ if st.session_state["page"] == "setup":
     st.subheader(tr("setup_simulation_header"))
     sc1, sc2 = st.columns(2)
     with sc1:
-        n_paths = st.slider(tr("setup_mc_paths"), 1000, 50000,
-                             st.session_state["n_paths"], step=1000)
+        n_paths = st.slider(tr("setup_mc_paths"), 1000, _MAX_PATHS,
+                             min(st.session_state["n_paths"], _MAX_PATHS), step=1000)
     with sc2:
         seed = int(st.number_input(tr("setup_random_seed"), value=int(st.session_state["seed"])))
 
@@ -945,9 +968,9 @@ elif st.session_state["page"] == "dashboard":
             _hist_years = st.session_state.get("history_years", None)
             # Calibrate drift/vol/correlations on ADJUSTED closes (total-return
             # dynamics — ex-date jumps must not pollute the estimates) ...
-            prices_adj = _load_prices(tickers_tuple, years=_hist_years, field="adj_close")
+            prices_adj = _safe_load_prices(tickers_tuple, years=_hist_years, field="adj_close")
             # ... but barriers, S0, and dividend jumps live in RAW price space.
-            prices_raw = _load_prices(tickers_tuple, years=_hist_years, field="close")
+            prices_raw = _safe_load_prices(tickers_tuple, years=_hist_years, field="close")
             cal    = HestonCalibrator(
                 prices_df   = prices_adj,
                 calib_years = st.session_state.get("calib_years", 5.0),

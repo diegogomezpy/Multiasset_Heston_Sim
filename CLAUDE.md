@@ -10,6 +10,34 @@ streamlit run app/app.py
 
 There are no tests and no linter configured. The project requires Python 3.12+ (f-strings use nested same-quote syntax introduced in 3.12).
 
+## Deployment (Streamlit Community Cloud)
+
+Live at **https://structurednotesim.streamlit.app/**, auto-redeploying from
+`main` on every push. Three deploy-hardening conventions exist — keep them
+intact when editing the relevant code:
+
+- **`requirements.txt` is pinned with upper bounds** (`<next-major`) so a cloud
+  rebuild can't silently pull a breaking release. Bump deliberately and re-pin.
+  `PyMuPDF` is intentionally **not** listed — it's verify-only
+  (`scripts/verify_pdf.py`); `matplotlib` is listed but notebook-only
+  (lazy-imported inside `simulator.plot()`, never loaded by the app).
+- **Path-count ceiling (`_MAX_PATHS` in `app/app.py`)**: MC peak memory scales
+  with `n_paths × n_steps × n_assets`; the free tier (~1 GB) OOMs on a 50K-path
+  multi-year note. `_MAX_PATHS` caps the "Monte Carlo paths" slider at **15,000
+  on Streamlit Cloud** (detected via `os.getcwd().startswith("/mount/src")` or a
+  `STREAMLIT_CLOUD` env var) and **50,000 locally**. The **`SNSIM_MAX_PATHS`**
+  env var overrides it. The slider's session default is clamped with
+  `min(..., _MAX_PATHS)` so a loaded config can't exceed the cap.
+- **Graceful data-load failure (`_safe_load_prices` in `app/app.py`)**: yfinance
+  is the single point of failure (Yahoo changes undocumented endpoints
+  periodically). `load_prices` already raises a friendly `ValueError` on
+  empty/rate-limited responses; `_safe_load_prices` wraps it to render
+  `st.error(tr("data_load_error"))` + a retry hint and `st.stop()` instead of a
+  traceback. The run-simulation block routes through it; the backtest, prefetch,
+  and live/historical loads already have their own `try/except` guards. If you
+  add a new interactive `_load_prices` call, route it through `_safe_load_prices`
+  (or guard it).
+
 ## Architecture
 
 The project is split into a pure-quant library (`core/`, `data/`) and a Streamlit front-end (`app/`). `core/` has no Streamlit, Plotly, or file I/O imports and can be used in notebooks independently.

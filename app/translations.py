@@ -472,6 +472,12 @@ _STRINGS: dict[str, tuple[str, str]] = {
                                  "Ejecutando calibración Heston y simulación de Monte Carlo…"),
     "mc_div_warning":           ("Could not load dividend history ({e}) — simulating without dividend jumps.",
                                  "No se pudo cargar el historial de dividendos ({e}) — simulando sin saltos de dividendos."),
+    "data_load_error":          ("**Could not load market data.** {msg}",
+                                 "**No se pudieron cargar los datos de mercado.** {msg}"),
+    "data_load_retry":          ("This is usually a transient Yahoo Finance rate-limit or network hiccup. "
+                                 "Wait a moment and try again.",
+                                 "Suele ser un límite de tasa o un problema de red transitorio de Yahoo Finance. "
+                                 "Espere un momento e inténtelo de nuevo."),
     "mc_click_run_info":        ("Click **Run Simulation** in the sidebar to run the Monte Carlo engine.",
                                  "Haga clic en **Ejecutar Simulación** en la barra lateral para ejecutar el motor de Monte Carlo."),
     "mc_prefetch_spinner":      ("Pre-fetching market data for {tickers}…",
