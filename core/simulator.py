@@ -462,6 +462,12 @@ class HestonMultiSimulator:
             [np.diff(np.log(S[i][:n_base]), axis=1) for i in range(n)],
             axis=2,
         )
+        # Strip the deterministic dividend jumps before measuring correlation:
+        # an ex-date drop adds log(1-d) to that step's return for ONE asset
+        # only, which would spuriously decorrelate it from the others (and the
+        # jumps are not part of the stochastic co-movement being checked).
+        if self.div_schedule is not None:
+            daily_lr -= np.log(1.0 - self.div_schedule.T)[np.newaxis, :, :]
         # Demean per path: (n_base, N, n)
         dm = daily_lr - daily_lr.mean(axis=1, keepdims=True)
         # Covariance matrix summed over time and paths: (n, n)
@@ -560,6 +566,9 @@ class HestonMultiSimulator:
         daily_lr = np.stack(
             [np.diff(np.log(self.S_paths[i][:n_base]), axis=1) for i in range(n)], axis=2
         )
+        # De-jump dividends, as in run() — deterministic drops are not co-movement
+        if self.div_schedule is not None:
+            daily_lr -= np.log(1.0 - self.div_schedule.T)[np.newaxis, :, :]
         dm = daily_lr - daily_lr.mean(axis=1, keepdims=True)
         cov_sum  = np.einsum('ptj,ptk->jk', dm, dm)
         cov_mean = cov_sum / ((self.N - 1) * n_base)

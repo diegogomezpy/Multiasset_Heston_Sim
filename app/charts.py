@@ -37,17 +37,25 @@ _RED          = "#c0392b"
 _GREY         = "#888888"
 _WHITE        = "white"
 
-def _add_autocall_barrier(fig: go.Figure, autocall_barrier, autocall_schedule) -> None:
+def _add_autocall_barrier(fig: go.Figure, autocall_barrier, autocall_schedule,
+                          x0=None) -> None:
     """
     Draw the autocall barrier on a performance chart.
 
-    If `autocall_schedule` (a list of (time, level) points) is given and the
+    If `autocall_schedule` (a list of (x, level) points) is given and the
     levels actually vary, draw a stepped dotted line that follows the step-down
     schedule. Otherwise fall back to a single flat dotted line at
     `autocall_barrier`. No-op when neither is supplied.
+
+    x0 is the chart origin the stepped line starts from (0.0 for time/step
+    axes, the ISSUE DATE for date axes). It must match the axis type of the
+    schedule's x values — defaulting a date axis to 0.0 would anchor the line
+    at the Unix epoch (Jan 1970) and blow up the x-range.
     """
     if autocall_schedule and len({round(lvl, 6) for _, lvl in autocall_schedule}) > 1:
-        xs = [0.0] + [t for t, _ in autocall_schedule]
+        if x0 is None:
+            x0 = autocall_schedule[0][0]
+        xs = [x0] + [t for t, _ in autocall_schedule]
         ys = [autocall_schedule[0][1]] + [lvl for _, lvl in autocall_schedule]
         fig.add_trace(go.Scatter(
             x=xs, y=ys, mode="lines",
@@ -264,7 +272,7 @@ def build_wof_fan(
         annotation_text=f"Knock-in barrier ({knock_in_barrier:.0%})",
         annotation_position="bottom right",
     )
-    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule)
+    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule, x0=0.0)
     for label, t_val in obs_labels:
         fig.add_vline(x=t_val, line_dash="dot", line_color="#aaa",
                       annotation_text=label, annotation_position="top")
@@ -339,7 +347,7 @@ def build_path_wof_chart(
         annotation_text=f"Knock-in barrier ({knock_in_barrier:.0%})",
         annotation_position="bottom right",
     )
-    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule)
+    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule, x0=0)
     for i, (step, label) in enumerate(zip(obs_steps, obs_labels)):
         called_here  = (autocall_q == i + 1)
         marker_color = _GREEN_MID if called_here else _GREY
@@ -562,7 +570,8 @@ def build_historical_wof_path(
                   annotation_text=f"Knock-in barrier ({knock_in_barrier:.1%})",
                   annotation_position="bottom right")
     _add_coupon_barrier(fig, coupon_barrier, knock_in_barrier)
-    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule)
+    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule,
+                          x0=hist_prices.index[issue_idx])
 
     # Observation markers — only while the note is alive
     for q, obs_date in enumerate(obs_dates):
@@ -664,7 +673,7 @@ def build_live_performance_chart(
                   annotation_text=f"Knock-in barrier ({knock_in_barrier:.1%})",
                   annotation_position="bottom right")
     _add_coupon_barrier(fig, coupon_barrier, knock_in_barrier)
-    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule)
+    _add_autocall_barrier(fig, autocall_barrier, autocall_schedule, x0=issue_date)
 
     # Today line
     if today in dates or today >= dates[0]:

@@ -435,6 +435,12 @@ if st.session_state["page"] == "setup":
     # ── Note terms ────────────────────────────────────────────────────────
     st.subheader("Note Terms")
 
+    note_name = st.text_input(
+        "Note name",
+        value=base.name if loaded_terms else "Custom Note",
+        help="Display name used in the dashboard and PDF report.",
+    )
+
     col1, col2, col3 = st.columns(3)
 
     maturity_opts = [0.5, 1.0, 1.5, 2.0, 3.0, 5.0]
@@ -529,6 +535,55 @@ if st.session_state["page"] == "setup":
         else:
             rescue_bar_pct = 100.0
         final_basket = "best_of" if rescue_on else "worst_of"
+
+    st.divider()
+
+    # ── Advanced — Growth / Classic Autocall ─────────────────────────────
+    # Every JSON-loadable field is editable here; nothing is silently
+    # pass-through-only anymore.
+    _adv_active = bool(getattr(base, "autocall_step_down", 0.0)
+                       or getattr(base, "coupon_at_autocall_only", False))
+    with st.expander("⚙️ Advanced — Growth / Classic Autocall (step-down barrier, premium at call)",
+                     expanded=_adv_active):
+        ac1, ac2, ac3 = st.columns(3)
+        with ac1:
+            step_down_pct = st.number_input(
+                "Autocall step-down per period (%)", 0.0, 10.0,
+                value=round(getattr(base, "autocall_step_down", 0.0) * 100, 4),
+                step=0.5, format="%.2f",
+                help="The autocall barrier declines by this amount each period "
+                     "from the first callable observation. 0 = constant barrier "
+                     "(plain Phoenix).",
+            )
+        with ac2:
+            _base_floor = getattr(base, "autocall_floor", None)
+            floor_pct = st.number_input(
+                "Autocall barrier floor (%)", 0.0, 100.0,
+                value=round((_base_floor if _base_floor is not None else 0.0) * 100, 4),
+                step=0.5, format="%.2f",
+                help="Minimum barrier level under step-down. 0 = no floor. "
+                     "Ignored when step-down is 0.",
+            )
+        with ac3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            premium_at_call = st.toggle(
+                "Premium only at autocall",
+                value=bool(getattr(base, "coupon_at_autocall_only", False)),
+                help="Growth autocall: no periodic coupon — an accrued premium of "
+                     "coupon p.a. × elapsed periods is paid as a lump only when "
+                     "the note autocalls (zero if held to maturity). "
+                     "E.g. Citi XS3096699163.",
+            )
+        if step_down_pct > 0:
+            _sd_preview = NoteTerms(
+                maturity=float(maturity), payment_freq=payment_freq,
+                autocall_barrier=autocall_bar_pct / 100.0,
+                autocall_start_period=int(autocall_start),
+                autocall_step_down=step_down_pct / 100.0,
+                autocall_floor=(floor_pct / 100.0) if floor_pct > 0 else None,
+            ).autocall_barrier_schedule()
+            st.caption("Barrier schedule: " +
+                       " → ".join(f"{lvl:.0%}" for lvl in _sd_preview))
 
     st.divider()
 
@@ -653,7 +708,7 @@ if st.session_state["page"] == "setup":
                 if sym:
                     selected_tickers[sym] = disp
             terms = NoteTerms(
-                name                  = base.name if loaded_terms else "Custom Note",
+                name                  = note_name.strip() or "Custom Note",
                 issuer                = issuer_input.strip(),
                 maturity              = float(maturity),
                 payment_freq          = payment_freq,
@@ -669,12 +724,10 @@ if st.session_state["page"] == "setup":
                 final_basket          = final_basket,
                 final_redemption_barrier = rescue_bar_pct / 100.0,
                 call_steepness        = None,   # hard trigger (deterministic)
-                # Advanced fields (growth/classic autocall) are not exposed as UI
-                # widgets — preserve them from the loaded config so they survive
-                # a round-trip through the setup form.
-                autocall_step_down      = getattr(base, "autocall_step_down", 0.0) if loaded_terms else 0.0,
-                autocall_floor          = getattr(base, "autocall_floor", None) if loaded_terms else None,
-                coupon_at_autocall_only = getattr(base, "coupon_at_autocall_only", False) if loaded_terms else False,
+                # Growth/classic autocall fields from the Advanced expander
+                autocall_step_down      = step_down_pct / 100.0,
+                autocall_floor          = (floor_pct / 100.0) if (step_down_pct > 0 and floor_pct > 0) else None,
+                coupon_at_autocall_only = bool(premium_at_call),
                 tickers               = selected_tickers,
                 # Keep the issue date even when it is in the future, so a
                 # config round-trip through the setup form doesn't drop it;
