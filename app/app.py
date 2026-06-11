@@ -224,8 +224,7 @@ TICKER_LOGOS: dict[str, str] = {
     "^BVSP":      _GF.format(domain="b3.com.br"),
     "^MXX":       _GF.format(domain="bmv.com.mx"),
 }
-_DISPLAY_TO_LABEL  = {k.split(" — ")[0]: k for k in UNDERLYING_OPTIONS.keys()}
-# Also map by yfinance symbol → label for JSON loading
+# Map by yfinance symbol → label for JSON loading
 _TICKER_TO_LABEL   = {v: k for k, v in UNDERLYING_OPTIONS.items()}
 
 # ==========================================================================
@@ -1015,23 +1014,29 @@ elif st.session_state["page"] == "dashboard":
                                       obs_steps=_obs_steps, obs_times=_obs_times)
             s0_values    = [p.S0 for p in cal_result.params]
 
+            # Memory: store the display arrays as float32 (halves the footprint).
+            # All payoff statistics in note_results were already computed at
+            # float64 by price_note above, and everything downstream (percentile
+            # fans, path explorer, per-asset perf) is display-level. Keep only
+            # realized_corr from sim_results — the sole field the dashboard reads;
+            # the rest of sim_results held S_paths (a duplicate of sim_prices)
+            # plus V_paths, ~2/3 of the run's memory for data never read again.
+            # grid_dates / div_schedule were write-only and are dropped too.
             st.session_state["results"] = {
                 **note_results,
-                "worst_of_paths": wof_paths,
-                "sim_prices":     sim_prices,
+                "worst_of_paths": wof_paths.astype(np.float32),
+                "sim_prices":     sim_prices.astype(np.float32),
                 "asset_names":    list(selected_tickers.values()),
                 "s0_values":      s0_values,
                 "params":         cal_result.params,
                 "corr_SS":        cal_result.corr_SS,
-                "sim_results":    sim_results,
+                "realized_corr":  sim_results["realized_corr"],
                 "t_dof":          cal_result.t_dof,
                 "terms_snapshot": terms.to_dict(),
                 # Real-calendar grid metadata (drives charts + obs tables)
                 "t_grid_years":   np.concatenate([[0.0], np.cumsum(_dt_grid)]),
                 "obs_steps":      _obs_steps,
                 "obs_times":      _obs_times,
-                "grid_dates":     _grid,
-                "div_schedule":   _div_sched,
             }
             st.session_state["last_asset_names"] = list(selected_tickers.values())
             st.session_state["path_num"] = 0
@@ -1095,18 +1100,29 @@ elif st.session_state["page"] == "dashboard":
                     st.error(tr("mc_fetch_failed", e=e))
         else:
             st.success(tr("sim_complete"))
+            # Build the three headline MC figures ONCE per rerun and reuse the
+            # same objects for both the on-screen tabs and the PDF cache. Each
+            # of these runs np.percentile over the full (2·n_paths × N) array,
+            # so building them twice (once here, once for display) doubled that
+            # cost every rerun. They must still rebuild each rerun because the
+            # Translator language can change. _fig_to_png copies the figure
+            # before rasterising, so sharing the object with st.plotly_chart is
+            # safe. (Language change → full script rerun → figures rebuilt.)
+            _fig_irr = build_irr_distribution(
+                R["annualized_returns"], R["autocall_events"],
+                R["expected_irr"], run_terms.coupon_pa, tr,
+            )
+            _fig_wof = build_wof_fan(
+                wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
+                autocall_barrier=run_terms.autocall_barrier,
+                autocall_schedule=_ac_sched_t,
+            )
+            _fig_corr_input = build_corr_heatmap(R["corr_SS"], asset_names, tr("corr_input"))
             # Cache MC figures for PDF generation (used by sidebar PDF button)
             st.session_state["_pdf_mc_figures"] = {
-                "irr_dist": build_irr_distribution(
-                    R["annualized_returns"], R["autocall_events"],
-                    R["expected_irr"], run_terms.coupon_pa, tr,
-                ),
-                "wof_fan": build_wof_fan(
-                    wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
-                    autocall_barrier=run_terms.autocall_barrier,
-                    autocall_schedule=_ac_sched_t,
-                ),
-                "corr": build_corr_heatmap(R["corr_SS"], asset_names, tr("corr_input")),
+                "irr_dist": _fig_irr,
+                "wof_fan":  _fig_wof,
+                "corr":     _fig_corr_input,
             }
             # ── Summary metrics ───────────────────────────────────────
             st.header(tr("summary_stats_header"))
@@ -1150,14 +1166,7 @@ elif st.session_state["page"] == "dashboard":
 
             with mc_tab1:
                 st.subheader(tr("irr_dist_subheader"))
-                coupon_pa = run_terms.coupon_pa
-                st.plotly_chart(
-                    build_irr_distribution(
-                        R["annualized_returns"], R["autocall_events"],
-                        R["expected_irr"], coupon_pa, tr,
-                    ),
-                    use_container_width=True,
-                )
+                st.plotly_chart(_fig_irr, use_container_width=True)
                 if R["prob_knock_in_total"] > 0:
                     st.info(tr("knock_in_info", pct=R['prob_knock_in_total'],
                                barrier=run_terms.knock_in_barrier))
@@ -1165,12 +1174,7 @@ elif st.session_state["page"] == "dashboard":
             with mc_tab2:
                 st.subheader(tr("price_paths_subheader"))
                 st.markdown(tr("wof_basket_md"))
-                st.plotly_chart(
-                    build_wof_fan(wof_paths, t_grid, run_terms.knock_in_barrier, obs_pairs, tr,
-                                  autocall_barrier=run_terms.autocall_barrier,
-                                  autocall_schedule=_ac_sched_t),
-                    use_container_width=True,
-                )
+                st.plotly_chart(_fig_wof, use_container_width=True)
                 st.markdown(tr("individual_paths_md"))
                 for i, name in enumerate(asset_names):
                     st.plotly_chart(
@@ -1178,7 +1182,12 @@ elif st.session_state["page"] == "dashboard":
                         use_container_width=True,
                     )
 
-            with mc_tab3:
+            # P2: isolate the path explorer in a fragment so its Random/Prev/Next
+            # buttons rerun ONLY this block, not every tab (the backtest + live
+            # tabs no longer rebuild on a path step). It closes over the last
+            # full run's arrays, which are stable until the next Run Simulation.
+            @st.fragment
+            def _mc_path_explorer():
                 st.subheader(tr("single_path_subheader"))
                 max_path = sim_prices.shape[0] - 1
                 pc1, pc2, pc3 = st.columns(3)
@@ -1255,13 +1264,21 @@ elif st.session_state["page"] == "dashboard":
                     )
                     _pe_col.metric(tr("mc_final_perf"), f"{_pe_final:.1%}")
 
+            with mc_tab3:
+                _mc_path_explorer()
+
             with mc_tab4:
                 st.subheader(tr("corr_diag_subheader"))
                 corr_SS       = R["corr_SS"]
-                realized_corr = R["sim_results"]["realized_corr"]
+                # realized_corr is the only field kept from the simulator's full
+                # output (P1); fall back to the legacy nested key for any results
+                # dict cached in session before that change.
+                realized_corr = R.get("realized_corr")
+                if realized_corr is None:
+                    realized_corr = R["sim_results"]["realized_corr"]
                 diff          = realized_corr - corr_SS
                 hm1, hm2, hm3 = st.columns(3)
-                hm1.plotly_chart(build_corr_heatmap(corr_SS,       asset_names, tr("corr_input")),    use_container_width=True)
+                hm1.plotly_chart(_fig_corr_input,                                                     use_container_width=True)
                 hm2.plotly_chart(build_corr_heatmap(realized_corr, asset_names, tr("corr_realized")), use_container_width=True)
                 hm3.plotly_chart(build_corr_heatmap(diff, asset_names, tr("corr_difference"),
                                                       zmin=-0.1, zmax=0.1),                  use_container_width=True)
@@ -1491,7 +1508,15 @@ elif st.session_state["page"] == "dashboard":
             st.session_state["_pdf_bt_figures"] = {"outcome": _bt_outcome_fig, "irr_scatter": _bt_irr_fig}
 
             try:
-                _hist_chart_prices = _load_prices(tickers_tuple, years=None)
+                # P4: this chart plots max-history daily closes (decades ×
+                # n_assets points) and re-serialises to the browser every rerun.
+                # Downsample to weekly for DISPLAY only — visually identical at
+                # this scale, a fraction of the JSON payload. Raw daily prices are
+                # still used everywhere the payoff is evaluated.
+                _hist_chart_prices = (
+                    _load_prices(tickers_tuple, years=None)
+                    .resample("W-FRI").last().dropna()
+                )
                 bt_start_mark = bt["Issue Date"].min()
                 bt_end_mark   = bt["Issue Date"].max()
                 st.plotly_chart(build_historical_prices(_hist_chart_prices, bt_start_mark, bt_end_mark, tr),
@@ -1499,60 +1524,68 @@ elif st.session_state["page"] == "dashboard":
             except Exception:
                 pass
 
-            st.subheader(tr("bt_path_explorer_header"))
-            st.caption(tr("bt_path_explorer_caption"))
+            # P2: the issue-date selector reruns ONLY this fragment, so picking
+            # a different historical issue no longer rebuilds the MC tab, the
+            # backtest summary charts, or the live tab. Closes over bt /
+            # _all_prices / terms from the last full run (stable until rerun).
+            @st.fragment
+            def _bt_path_explorer():
+                st.subheader(tr("bt_path_explorer_header"))
+                st.caption(tr("bt_path_explorer_caption"))
 
-            issue_dates = sorted(bt["Issue Date"].unique())
+                issue_dates = sorted(bt["Issue Date"].unique())
 
-            _prev_dates = st.session_state.get("bt_issue_dates_list", [])
-            if list(issue_dates) != list(_prev_dates):
-                st.session_state["bt_issue_dates_list"] = list(issue_dates)
-                st.session_state["bt_issue_idx"] = 0
+                _prev_dates = st.session_state.get("bt_issue_dates_list", [])
+                if list(issue_dates) != list(_prev_dates):
+                    st.session_state["bt_issue_dates_list"] = list(issue_dates)
+                    st.session_state["bt_issue_idx"] = 0
 
-            _issue_idx = min(st.session_state.get("bt_issue_idx", 0), len(issue_dates) - 1)
+                _issue_idx = min(st.session_state.get("bt_issue_idx", 0), len(issue_dates) - 1)
 
-            selected_issue = st.selectbox(
-                tr("bt_issue_date_select"),
-                issue_dates,
-                index=_issue_idx,
-                format_func=lambda d: d.strftime("%Y-%m-%d"),
-                key="bt_issue_selector",
-            )
-
-            if selected_issue is not None:
-                row = bt[bt["Issue Date"] == selected_issue].iloc[0]
-                st.markdown(
-                    f"{tr('bt_outcome_label', outcome=row['Outcome'])} &nbsp;|&nbsp; "
-                    f"{tr('bt_irr_label', irr=row['IRR'])} &nbsp;|&nbsp; "
-                    f"{tr('bt_worst_asset_label', asset=row['Worst Asset'], perf=row['Worst Final Perf'])}"
+                selected_issue = st.selectbox(
+                    tr("bt_issue_date_select"),
+                    issue_dates,
+                    index=_issue_idx,
+                    format_func=lambda d: d.strftime("%Y-%m-%d"),
+                    key="bt_issue_selector",
                 )
-                try:
-                    if _all_prices is not None:
-                        # Same calendar-first snapping run_backtest uses, so the
-                        # chart markers sit exactly on the evaluated dates.
-                        _pe_anchor, _pe_obs_dates = snapped_obs_dates(
-                            _all_prices, terms, selected_issue)
-                        _pe_sched = (
-                            list(zip(_pe_obs_dates, terms.autocall_barrier_schedule()))
-                            if terms.autocall_step_down else None
-                        )
-                        st.plotly_chart(
-                            build_historical_wof_path(
-                                _all_prices,
-                                issue_date        = _pe_anchor,
-                                obs_dates         = _pe_obs_dates,
-                                knock_in_barrier  = terms.knock_in_barrier,
-                                autocall_barrier  = terms.autocall_barrier,
-                                coupon_barrier    = terms.coupon_barrier,
-                                call_quarter      = int(row["Call Quarter"]),
-                                tr                = tr,
-                                autocall_schedule = _pe_sched,
-                                coupon_at_autocall_only = terms.coupon_at_autocall_only,
-                            ),
-                            use_container_width=True,
-                        )
-                except Exception as e:
-                    st.error(tr("bt_could_not_build_path", e=e))
+
+                if selected_issue is not None:
+                    row = bt[bt["Issue Date"] == selected_issue].iloc[0]
+                    st.markdown(
+                        f"{tr('bt_outcome_label', outcome=row['Outcome'])} &nbsp;|&nbsp; "
+                        f"{tr('bt_irr_label', irr=row['IRR'])} &nbsp;|&nbsp; "
+                        f"{tr('bt_worst_asset_label', asset=row['Worst Asset'], perf=row['Worst Final Perf'])}"
+                    )
+                    try:
+                        if _all_prices is not None:
+                            # Same calendar-first snapping run_backtest uses, so the
+                            # chart markers sit exactly on the evaluated dates.
+                            _pe_anchor, _pe_obs_dates = snapped_obs_dates(
+                                _all_prices, terms, selected_issue)
+                            _pe_sched = (
+                                list(zip(_pe_obs_dates, terms.autocall_barrier_schedule()))
+                                if terms.autocall_step_down else None
+                            )
+                            st.plotly_chart(
+                                build_historical_wof_path(
+                                    _all_prices,
+                                    issue_date        = _pe_anchor,
+                                    obs_dates         = _pe_obs_dates,
+                                    knock_in_barrier  = terms.knock_in_barrier,
+                                    autocall_barrier  = terms.autocall_barrier,
+                                    coupon_barrier    = terms.coupon_barrier,
+                                    call_quarter      = int(row["Call Quarter"]),
+                                    tr                = tr,
+                                    autocall_schedule = _pe_sched,
+                                    coupon_at_autocall_only = terms.coupon_at_autocall_only,
+                                ),
+                                use_container_width=True,
+                            )
+                    except Exception as e:
+                        st.error(tr("bt_could_not_build_path", e=e))
+
+            _bt_path_explorer()
 
 
     # ══════════════════════════════════════════════════════════════════
