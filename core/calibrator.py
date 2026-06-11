@@ -1,6 +1,6 @@
 """
-heston_calibrator.py
---------------------
+core/calibrator.py
+------------------
 Calibrates Heston model parameters for one or more assets from historical
 daily closing price data.
 
@@ -55,7 +55,7 @@ Returns a CalibrationResult with:
 
 Usage
 -----
-    from heston_calibrator import HestonCalibrator
+    from core.calibrator import HestonCalibrator
 
     cal = HestonCalibrator(
         tickers   = {"^GSPC": "SPX", "^STOXX50E": "SX5E", "^SSMI": "SMI"},
@@ -66,7 +66,7 @@ Usage
     result = cal.calibrate()
 
     # Feed directly into simulator
-    from heston_simulator import HestonMultiSimulator
+    from core.simulator import HestonMultiSimulator
     sim = HestonMultiSimulator(
         params  = result.params,
         corr_SS = result.corr_SS,
@@ -84,7 +84,7 @@ from typing import Optional, Union
 from scipy.optimize import minimize
 from scipy import stats
 
-# HestonParams lives in heston_simulator — import it
+# HestonParams lives in core.simulator — import it
 from core.simulator import HestonParams
 
 

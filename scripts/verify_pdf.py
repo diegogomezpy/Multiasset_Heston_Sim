@@ -2,10 +2,10 @@
 Standalone verification harness for app/pdf_report.py.
 
 Runs a minimal calibration -> simulation -> price_note pipeline (replicating
-app.py's run block) on the PUENTE Bonus Certificate config, builds a few
-Plotly figures directly (so we don't depend on app/charts.py or
-app/translations.py, which another agent owns), loads the CADIEM branding
-dict, and renders the report once in English and once in Spanish.
+app.py's run block) on the PUENTE Bonus Certificate config, builds the REAL
+app/charts.py figures per language (so the verification exercises the actual
+chart palette, branded recolouring and aspect ratios), loads the CADIEM
+branding dict, and renders the report once in English and once in Spanish.
 
 Outputs /tmp/report_en.pdf and /tmp/report_es.pdf, then rasterises every page
 to PNG via PyMuPDF so the pages can be eyeballed.

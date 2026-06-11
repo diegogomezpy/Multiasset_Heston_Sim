@@ -1,6 +1,6 @@
 """
-heston_simulator.py
--------------------
+core/simulator.py
+-----------------
 Multi-asset Heston Stochastic Volatility Model simulator.
 
 Model dynamics for asset i (under physical measure):
@@ -50,8 +50,6 @@ Cross-asset dependency is specified via a 3-block correlation structure:
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -74,7 +72,8 @@ class HestonParams:
     xi    : float – Vol-of-vol.
     rho   : float – Own leverage effect: corr(dS, dV) for this asset.
     V0    : float – Initial variance.
-    mu    : float – Annualised drift (physical measure). Default 0.0 = risk-neutral.
+    mu    : float – Annualised arithmetic drift (physical measure; there is
+                    no discounting in this library).
     """
     name  : str
     S0    : float
@@ -533,14 +532,21 @@ class HestonMultiSimulator:
             print(f"  {nm:>7}  {row}")
         print("=" * 60 + "\n")
 
-    def plot(self, n_display: int = 40) -> None:
+    def plot(self, n_display: int = 40, save_path: str | None = None) -> None:
         """
         Diagnostic dashboard:
           Row 1: Price paths per asset
           Row 2: Vol paths per asset
           Row 3: Terminal log-return distributions
           Row 4: Correlation heatmaps (input vs realized)
+
+        save_path : str or None
+            If provided, the figure is also written to this path as a PNG.
+            Default None = display only (no file I/O).
         """
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+
         if self.S_paths is None:
             raise RuntimeError("Call run() before plot().")
 
@@ -653,9 +659,11 @@ class HestonMultiSimulator:
                                  ha="center", va="center", fontsize=8)
             plt.colorbar(im3, ax=ax_diff, fraction=0.046)
 
-        plt.savefig("heston_multi_diagnostics.png", dpi=150)
+        if save_path is not None:
+            plt.savefig(save_path, dpi=150)
         plt.show()
-        print("[Saved] heston_multi_diagnostics.png")
+        if save_path is not None:
+            print(f"[Saved] {save_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -703,4 +711,4 @@ if __name__ == "__main__":
     )
 
     results = sim.run()
-    sim.plot()
+    sim.plot(save_path="heston_multi_diagnostics.png")

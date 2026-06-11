@@ -335,32 +335,6 @@ class NoteTerms:
                 levels[j - 1] = lvl
         return levels
 
-    def autocall_prob(self, basket_val: np.ndarray) -> np.ndarray:
-        """
-        Autocall trigger probability at the observation date.
-
-        call_steepness = None (default) — HARD TRIGGER:
-            Returns exactly 1.0 where basket >= autocall_barrier, else 0.0.
-            This is how real autocallables work: the call is a deterministic
-            function of the observed level, not a coin flip. Because the
-            downstream check is `uniform_draw < prob` with draws in [0, 1),
-            probabilities of exactly 0/1 make the trigger fully deterministic
-            (independent of the RNG seed) in both price_note() and the
-            historical backtest.
-
-        call_steepness = float — SOFT TRIGGER (sigmoid):
-            Smooth sigmoid centred at the barrier, useful for sensitivity /
-            "fuzzy barrier" analysis. Note that moderate steepness values are
-            NOT effectively hard: at steepness=100, a basket sitting 1% below
-            the barrier still autocalls with probability ≈ 27%, and 1% above
-            only ≈ 73%. Use steepness >= ~2000 if you want a near-hard sigmoid
-            (P ≈ 1e-9 at ±1%).
-        """
-        if self.call_steepness is None:
-            return (basket_val >= self.autocall_barrier).astype(float)
-        x = np.clip(-self.call_steepness * (basket_val - self.autocall_barrier), -500.0, 500.0)
-        return 1.0 / (1.0 + np.exp(x))
-
     # ------------------------------------------------------------------
     # Serialisation — stores human-readable fields only
     # ------------------------------------------------------------------
@@ -558,8 +532,6 @@ def price_note(
             "prob_knock_in_total":      0.0,
             "prob_barrier_event":       0.0,
             "prob_rescued":             0.0,
-            # Legacy alias
-            "prob_floor":               0.0,
         }
 
     # ------------------------------------------------------------------
@@ -595,7 +567,8 @@ def price_note(
 
     # Autocall probabilities per period, using a (possibly step-down) per-period
     # barrier schedule. For the common constant-barrier case this reduces exactly
-    # to NoteTerms.autocall_prob(); the schedule generalises it to growth autocalls.
+    # to a scalar comparison against autocall_barrier; the schedule generalises
+    # it to growth autocalls.
     autocall_levels = terms.autocall_barrier_schedule()          # (n_obs,)
     if terms.call_steepness is None:
         autocall_probs = (autocall_basket_vals >= autocall_levels[np.newaxis, :]).astype(float)
@@ -817,9 +790,6 @@ def price_note(
         "prob_knock_in_total":      float(ki_total.mean()),
         "prob_barrier_event":       float(be_total.mean()),   # incl. paths rescued by final condition
         "prob_rescued":             float((be_total & ~ki_total).mean()),
-
-        # Legacy alias
-        "prob_floor":               float(ki_total.mean()),
     }
 
 

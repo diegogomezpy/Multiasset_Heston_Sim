@@ -6,9 +6,11 @@ Single source of truth for price data loading.
 Three backends, one interface:
 
     load_prices()                          # pull live from yfinance (default)
-    load_prices(source="csv")             # bundled CSVs in data/
-    load_prices(source="csv", csv_files={"my.csv": "SPX"})  # custom CSVs
+    load_prices(source="csv", csv_files={"my.csv": "SPX"})  # local CSVs
     load_prices(source="df", df=my_df)    # pre-loaded DataFrame
+
+No CSVs are bundled with the repo: source="csv" always requires an explicit
+csv_files mapping.
 
 Nothing else in the codebase should know about file paths or yfinance.
 """
@@ -26,13 +28,6 @@ DEFAULT_TICKERS: dict[str, str] = {
     "^GSPC":     "SPX",
     "^STOXX50E": "SX5E",
     "^SSMI":     "SMI",
-}
-
-# Bundled CSV files (used when source="csv" with no csv_files override)
-DEFAULT_CSV_FILES: dict[str, str] = {
-    str(_DATA_DIR / "SPX.csv"):  "SPX",
-    str(_DATA_DIR / "SX5E.csv"): "SX5E",
-    str(_DATA_DIR / "SMI.csv"):  "SMI",
 }
 
 
@@ -53,7 +48,7 @@ def load_prices(
     ----------
     source : str
         "yfinance"  — pull live data from Yahoo Finance (default).
-        "csv"       — load from CSV files (bundled or custom).
+        "csv"       — load from local CSV files (csv_files is required).
         "df"        — use a pre-loaded DataFrame directly.
 
     field : str
@@ -84,8 +79,7 @@ def load_prices(
 
     csv_files : dict[str, str] or None
         Mapping from file path → display name.
-        Only used when source="csv".
-        Defaults to the three bundled index CSVs in data/.
+        Required when source="csv" — no CSVs are bundled with the repo.
 
     df : pd.DataFrame or None
         Pre-loaded price DataFrame with asset names as columns.
@@ -108,7 +102,12 @@ def load_prices(
     if source == "yfinance":
         return _from_yfinance(tickers or DEFAULT_TICKERS, years, end_date, ssl_verify, field)
     elif source == "csv":
-        return _from_csv(csv_files or DEFAULT_CSV_FILES, field)
+        if csv_files is None:
+            raise ValueError(
+                "source='csv' requires csv_files={path: display_name, ...} — "
+                "no CSVs are bundled with the repo."
+            )
+        return _from_csv(csv_files, field)
     elif source == "df":
         if df is None:
             raise ValueError("source='df' requires a DataFrame passed via df=")
@@ -213,7 +212,6 @@ def _from_csv(csv_files: dict[str, str], field: str = "close") -> pd.DataFrame:
         if not p.exists():
             raise FileNotFoundError(
                 f"Price CSV not found: {p}.\n"
-                f"Bundled CSVs live in {_DATA_DIR}. "
                 f"Provide an absolute path or use source='yfinance'."
             )
         df = pd.read_csv(p, index_col="Date", parse_dates=True)

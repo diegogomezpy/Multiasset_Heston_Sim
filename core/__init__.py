@@ -1,5 +1,5 @@
 """
-core — pure quantitative library for Multiasset_Heston_Sim.
+core — pure quantitative library for Structured_Note_Sim.
 
 No Streamlit, no Plotly, no file I/O.  Import freely in notebooks and tests.
 
