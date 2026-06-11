@@ -335,3 +335,135 @@ JSON config example (Option A: 100% floor + 15% CAP):
   "tickers": {"NU": "NU", "MELI": "MELI"}
 }
 ```
+
+## Repo audit (2026-06-11): structure, branding contract, dead code, performance
+
+Findings only — none of these are fixed yet. Ranked within each group by impact.
+
+### Branding config — the contract is ad hoc, tuned for CADIEM
+
+The branding JSON works for CADIEM because the PDF's chart-rebrand constants
+happen to be tuned to a green palette; it is NOT a general contract:
+
+- **B1 Hard-coded complementary palette** (`app/pdf_report.py`):
+  `_BRAND_GOLD = (198,148,38)` and `_GREEN_RAMP_HUE = 150` are module
+  constants. A firm with blue/red branding gets brand-colored series but a
+  *gold* second category and a *green* hsl ramp on the backtest bar —
+  inconsistent for any non-green palette. Fix: derive the ramp hue from the
+  branding accent (RGB→HSL) and add an optional `chart_secondary_color` key
+  (default gold) to the branding schema.
+- **B2 No schema validation**: `app/app.py` just `json.loads` the upload and
+  `_resolve_palette` indexes keys directly. A typo (`primary_colour`) is
+  silently ignored; a malformed hex (`"green"`) raises deep inside PDF
+  generation. Mirror `NoteTerms.from_dict`: warn on unknown keys, validate hex
+  with fallback to defaults.
+- **B3 Stale schema docs**: the `pdf_report.py` module docstring documents only
+  `firm_name/primary_color/accent_color/logo_url` but the loader also supports
+  `logo_file` (preferred) and `logo_base64`. `generate_pdf_report`'s docstring
+  points to that stale docstring. There is no canonical schema doc; the closest
+  is `branding/branding_example.json` (which references a nonexistent
+  `branding/acme_logo.png`).
+- **B4 Branding is PDF-only** (deliberate but undocumented): the Streamlit UI
+  palette is hard-coded in `app/style.css` + `.streamlit/config.toml`. The
+  sidebar uploader gives no hint that branding affects only the report.
+- **B5 No content keys**: institutional reports carry firm contact/website and
+  sometimes custom disclaimer text; the cover eyebrow "STRUCTURED NOTE
+  ANALYTICS" and the legal block are hard-coded. Candidate optional keys:
+  `report_title`, `website`, `contact`, `footer_note`.
+
+### Performance — why the app feels slow (ranked)
+
+- **P1 Session-state memory blow-up** (`app/app.py` run block): the stored
+  `results` dict keeps `sim_results` whole — `S_paths` (a list duplicating
+  `sim_prices`) AND `V_paths` — but the dashboard only ever reads
+  `sim_results["realized_corr"]`. Measured footprint at the 10K-path default:
+  ~630 MB held for a 1.5Y note, ~1.25 GB for 3Y, ~2.1 GB for 5Y; at the 50K
+  slider max a 5Y note holds ~10 GB → swap pressure makes *everything* slow.
+  Fix: store only `realized_corr` (and drop the write-only `grid_dates` /
+  `div_schedule` keys, see D-list); optionally store paths as float32 (halves
+  it again). Peak memory during the run is ~2× the stored figure because
+  `perf_paths` and the `np.stack` copy coexist; having the simulator return a
+  3-D array directly would remove one full copy.
+- **P2 Every widget interaction reruns every tab**: clicking "Next path"
+  rebuilds the backtest figures, the live tab, and the MC figures. The path
+  explorer and the backtest issue-date selector are ideal candidates for
+  `@st.fragment` (Streamlit ≥1.33) so navigation reruns only that fragment.
+- **P3 MC figures built twice per rerun**: the MC tab builds
+  `irr_dist`/`wof_fan`/`corr` once into `_pdf_mc_figures` (for the PDF) and
+  then builds the SAME figures again for display. Each `build_wof_fan` call
+  runs `np.percentile` over the full (2·n_paths × N) array; the per-asset
+  `build_fan_chart` calls add one percentile pass per asset — all repeated on
+  every rerun. Fix: build once per (run, lang) and reuse for both display and
+  PDF, or cache the percentile bands in `results` at run time.
+- **P4 Full-history chart re-serialized per rerun**: `build_historical_prices`
+  plots max-history daily closes (decades × n_assets points) and re-sends the
+  JSON to the browser on every rerun. Downsample to weekly for display
+  (visually identical at that scale).
+- **P5 PDF logo fetches are uncached and repeated**: `_load_ticker_logo` is
+  called for the cover, the calibration table, and the performance table —
+  3 resolutions (and up to 3 × 8s-timeout network fetches) per asset per
+  report when no local file exists. Add a per-call memo (the calibration
+  table already builds a local `logo_cache`; hoist that to one shared dict per
+  `generate_pdf_report` call, or `functools.lru_cache`).
+- **P6 matplotlib imported at module top of `core/simulator.py`** (~0.2s import
+  + resident memory in the Streamlit process) though only the notebook-only
+  `plot()` method uses it. Move the import inside `plot()`.
+- (Already on the roadmap: QW1 `Z_full` preallocation, QW2 basket-extraction
+  vectorization, QW7 print→logging.)
+
+### Dead code inventory
+
+- **D1 `data/loader.py` bundled-CSV default is broken**: `DEFAULT_CSV_FILES`
+  points at `data/SPX.csv`/`SX5E.csv`/`SMI.csv` which do not exist in the repo
+  — `load_prices(source="csv")` with defaults raises FileNotFoundError. Either
+  drop the csv source's defaults or the dead constants.
+- **D2 97 unused translation keys** in `app/translations.py` (389 total, 292
+  used) — relics of the pre-rewrite single-page app (`decisiveness_*`,
+  `floor_*`, `call_3m/6m/9m`, `tab_fan/payoff/explorer/corr`, `outcome_*`, …).
+  Verified by AST scan against all `tr("…")` call sites.
+- **D3 `app/app.py:227 _DISPLAY_TO_LABEL`** — built, never read.
+- **D4 `NoteTerms.autocall_prob()`** — no call sites anywhere (QW4 already
+  flags it as wrong for step-down notes; it can simply be removed).
+- **D5 Write-only results keys**: `results["grid_dates"]` and
+  `results["div_schedule"]` are stored by the run block and never read.
+- **D6 Unused engine outputs**: `price_note`'s `prob_floor` /
+  `expected_nominal_payout` and the simulator's `S_terminal` /
+  `log_returns_terminal` have no consumers outside internal print summaries
+  (keep only if regarded as public API for notebooks).
+- **D7 `charts.py:_plain_layout`** is a pure alias of `_apply_theme` (12 call
+  sites); the `_GREEN_DARK/_GREEN_MID/_GREEN_LIGHT` aliases now hold navy/blue
+  values — rename in one mechanical pass to stop the name/value mismatch.
+- **D8 `simulator.plot()`** writes `heston_multi_diagnostics.png` to cwd —
+  file I/O inside `core/`, violating the module's own "no file I/O" contract.
+  Notebook-only; relocate to a scripts/ helper or guard it.
+- NOT dead: the Inter TTC font fallback in pdf_report.py (`fonts/Inter.ttc`
+  exists and is the fallback if IBM Plex files are removed).
+
+### Structure & doc rot
+
+- **S1 Two parallel i18n systems**: `app/translations.py` (Translator, UI) and
+  `_LABELS` inside `app/pdf_report.py` (~80 keys, PDF). Same strings exist in
+  both (e.g. "Análisis de Nota Estructurada"). Unify on Translator or document
+  the split; today a wording fix must be made twice.
+- **S2 `app/pdf_report.py` is ~2000 lines** mixing five concerns: label
+  translations, font registration, logo fetching/conversion, chart color
+  remapping, and page layout. Natural split: `app/pdf/` package with
+  `labels.py`, `branding.py` (palette + remap + logos), `layout.py` (_NotePDF),
+  `report.py` (page builders). Same for `app/app.py` (~1830 lines): the setup
+  page and dashboard could be separate modules; the 4 near-identical inline
+  logo+name HTML snippets belong in one helper.
+- **S3 Logo-resolution logic is scattered**: URL building lives in `app/app.py`
+  (`TICKER_LOGOS`, `_LOGO_BASE`, `get_issuer_logo_url`), local-file-first
+  resolution in `app/pdf_report.py`. A shared `branding/logos.py` (or
+  `app/logos.py`) would give the web UI local-file support for free.
+- **S4 Stale docstrings**: `core/simulator.py` titles itself
+  "heston_simulator.py", `core/calibrator.py` "heston_calibrator.py";
+  `core/__init__.py` references the old project name "Multiasset_Heston_Sim";
+  `scripts/verify_pdf.py`'s docstring claims it avoids `app/charts.py` but it
+  now imports the real chart builders (intentionally); `HestonParams.mu`
+  docstring says "Default 0.0 = risk-neutral" (misleading — there is no
+  discounting anywhere; physical measure).
+- **S5 CLAUDE.md "New note structures" section describes `min_return` /
+  `capital_guarantee` / `upside_cap` as "fields needed"** — they are
+  implemented in `core/note.py` and shipped in the PUENTE configs. The section
+  should be rewritten as documentation of the implemented payoffs.
