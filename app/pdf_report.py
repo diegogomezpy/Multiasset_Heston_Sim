@@ -39,8 +39,14 @@ import numpy as np
 from pathlib import Path
 from fpdf import FPDF
 
-_FONT_DIR  = Path(__file__).parent.parent / "fonts"
-_INTER_TTC = _FONT_DIR / "Inter.ttc"
+_FONT_DIR        = Path(__file__).parent.parent / "fonts"
+_INTER_TTC       = _FONT_DIR / "Inter.ttc"
+_IBM_REGULAR     = _FONT_DIR / "IBMPlexSans-Regular.ttf"
+_IBM_BOLD        = _FONT_DIR / "IBMPlexSans-Bold.ttf"
+_IBM_SEMIBOLD    = _FONT_DIR / "IBMPlexSans-SemiBold.ttf"
+_IBM_LIGHT       = _FONT_DIR / "IBMPlexSans-Light.ttf"
+_IBM_ITALIC      = _FONT_DIR / "IBMPlexSans-Italic.ttf"
+_IBM_BOLDITALIC  = _FONT_DIR / "IBMPlexSans-BoldItalic.ttf"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Default palette — institutional deep-navy / mid-blue / warm-grey
@@ -268,7 +274,11 @@ def _safe(text: object, *, latin1: bool = False) -> str:
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Font registration
-# TTC indices used from Inter.ttc:
+# Primary: IBM Plex Sans individual TTF files (institutional quality).
+# Fallback 1: Inter TTC collection (if IBM files are missing).
+# Fallback 2: Helvetica (built-in, Latin-1 only).
+#
+# TTC indices used from Inter.ttc (fallback):
 #   0  = Inter Regular       14 = Inter Bold
 #   3  = Inter Italic        15 = Inter Bold Italic
 #   6  = Inter Light         12 = Inter SemiBold
@@ -281,6 +291,28 @@ _TTC_IDX = {
     ("InterSB",    ""):   12,
     ("InterLight", ""):   6,
 }
+
+# Font family name exposed to _sf() — switches based on what is available
+_FONT_FAMILY = "IBMPlexSans"   # overridden to "Inter" if IBM files absent
+
+
+def _register_ibm_plex(pdf: FPDF) -> bool:
+    """Register IBM Plex Sans TTF files. Returns True if all variants loaded."""
+    _required = [_IBM_REGULAR, _IBM_BOLD, _IBM_SEMIBOLD, _IBM_LIGHT,
+                 _IBM_ITALIC, _IBM_BOLDITALIC]
+    if not all(p.exists() for p in _required):
+        return False
+    try:
+        pdf.add_font("IBMPlexSans",      "",   str(_IBM_REGULAR),    uni=True)
+        pdf.add_font("IBMPlexSans",      "B",  str(_IBM_BOLD),       uni=True)
+        pdf.add_font("IBMPlexSans",      "I",  str(_IBM_ITALIC),     uni=True)
+        pdf.add_font("IBMPlexSans",      "BI", str(_IBM_BOLDITALIC), uni=True)
+        pdf.add_font("IBMPlexSansSB",    "",   str(_IBM_SEMIBOLD),   uni=True)
+        pdf.add_font("IBMPlexSansLight", "",   str(_IBM_LIGHT),      uni=True)
+        return True
+    except Exception as exc:
+        print(f"[PDF font] IBM Plex Sans registration failed: {exc}")
+        return False
 
 
 def _register_inter(pdf: FPDF) -> bool:
@@ -322,38 +354,66 @@ class _NotePDF(FPDF):
         self.set_margins(16, 16, 16)
         self.set_auto_page_break(auto=True, margin=28)
         self.alias_nb_pages()
-        self._use_inter = _register_inter(self)
+        # Try IBM Plex Sans first; fall back to Inter TTC; last resort Helvetica
+        if _register_ibm_plex(self):
+            self._font_family = "IBMPlexSans"
+            self._use_unicode = True
+            print("[PDF font] Using IBM Plex Sans")
+        elif _register_inter(self):
+            self._font_family = "Inter"
+            self._use_unicode = True
+            print("[PDF font] Using Inter (IBM Plex Sans files missing)")
+        else:
+            self._font_family = "Helvetica"
+            self._use_unicode = False
+            print("[PDF font] Using Helvetica fallback")
+        # Legacy flag — kept so external code referencing _use_inter still works
+        self._use_inter = self._use_unicode
 
     # ------------------------------------------------------------------
     # Font helpers
     # ------------------------------------------------------------------
     def _sf(self, size: float, weight: str = "regular") -> None:
-        """Set font by semantic weight."""
-        if self._use_inter:
+        """Set font by semantic weight.
+
+        Dispatches to IBM Plex Sans, Inter, or Helvetica depending on which
+        was successfully registered at construction time.
+        """
+        ff = self._font_family
+        if ff == "IBMPlexSans":
             _map = {
-                "regular":    ("Inter",      ""),
-                "bold":       ("Inter",      "B"),
-                "bold_italic":("Inter",      "BI"),
-                "italic":     ("Inter",      "I"),
-                "semibold":   ("InterSB",    ""),
-                "light":      ("InterLight", ""),
+                "regular":     ("IBMPlexSans",      ""),
+                "bold":        ("IBMPlexSans",      "B"),
+                "bold_italic": ("IBMPlexSans",      "BI"),
+                "italic":      ("IBMPlexSans",      "I"),
+                "semibold":    ("IBMPlexSansSB",    ""),
+                "light":       ("IBMPlexSansLight", ""),
+            }
+            family, style = _map.get(weight, ("IBMPlexSans", ""))
+        elif ff == "Inter":
+            _map = {
+                "regular":     ("Inter",      ""),
+                "bold":        ("Inter",      "B"),
+                "bold_italic": ("Inter",      "BI"),
+                "italic":      ("Inter",      "I"),
+                "semibold":    ("InterSB",    ""),
+                "light":       ("InterLight", ""),
             }
             family, style = _map.get(weight, ("Inter", ""))
-            self.set_font(family, style, size)
         else:
             _hmap = {
-                "regular":    ("Helvetica", ""),
-                "bold":       ("Helvetica", "B"),
-                "bold_italic":("Helvetica", "BI"),
-                "italic":     ("Helvetica", "I"),
-                "semibold":   ("Helvetica", "B"),
-                "light":      ("Helvetica", ""),
+                "regular":     ("Helvetica", ""),
+                "bold":        ("Helvetica", "B"),
+                "bold_italic": ("Helvetica", "BI"),
+                "italic":      ("Helvetica", "I"),
+                "semibold":    ("Helvetica", "B"),
+                "light":       ("Helvetica", ""),
             }
             family, style = _hmap.get(weight, ("Helvetica", ""))
-            self.set_font(family, style, size)
+        self.set_font(family, style, size)
 
     def _safe(self, text: object) -> str:
-        return _safe(text, latin1=not self._use_inter)
+        return _safe(text, latin1=not self._use_unicode)
 
     # ------------------------------------------------------------------
     # Cell/multi_cell overrides for automatic text sanitisation
@@ -476,7 +536,7 @@ class _NotePDF(FPDF):
         self._sf(8.5, "regular")
         self.set_text_color(*_TEXT)
         x0 = self.get_x()
-        self.cell(5, 5, "•" if self._use_inter else chr(149))
+        self.cell(5, 5, "•" if self._use_unicode else chr(149))
         self.multi_cell(self.w - self.r_margin - x0 - 5, 5, text)
         self.ln(1.5)
 
@@ -644,17 +704,40 @@ class _NotePDF(FPDF):
 # Logo fetching
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _fetch_image_bytes(url: str, timeout: int = 5) -> bytes | None:
-    """Download an image from a URL. Returns raw bytes or None on failure."""
+def _fetch_image_bytes(url: str, timeout: int = 8) -> bytes | None:
+    """Download an image from a URL. Returns raw bytes or None on failure.
+
+    Uses a browser-like User-Agent so Google Favicon and other CDNs don't
+    redirect or block the request.  Validates that the response body is
+    non-empty before returning.
+    """
     if not url:
         return None
+    # Upgrade Google favicon requests to sz=256 for crisper logos
+    if "google.com/s2/favicons" in url:
+        import re as _re
+        url = _re.sub(r"sz=\d+", "sz=256", url)
     try:
         req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 (compatible; PDF-report/1.0)"}
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0 Safari/537.36"
+                ),
+                "Accept": "image/png,image/jpeg,image/webp,image/*,*/*",
+            },
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
-    except Exception:
+            data = resp.read()
+        if not data:
+            print(f"[PDF logo] Empty response from {url}")
+            return None
+        print(f"[PDF logo] OK  {len(data):,} bytes  {url}")
+        return data
+    except Exception as exc:
+        print(f"[PDF logo] FAIL {url!r}: {exc}")
         return None
 
 
@@ -662,14 +745,91 @@ def _fetch_image_bytes(url: str, timeout: int = 5) -> bytes | None:
 # Figure export helper
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _fig_to_png(fig, width: int = 900, height: int = 420) -> bytes | None:
+def _theme_figure(fig, primary_color: tuple, accent_color: tuple):
+    """Apply a clean neutral/branded theme to a Plotly figure before rasterising.
+
+    Sets white backgrounds, report typography, branded trace colors, and removes
+    the Plotly logo watermark.  Called on every figure just before _fig_to_png().
+    """
+    try:
+        import plotly.graph_objects as go
+        # Map RGB tuples to hex strings for Plotly
+        def _rgb(t):
+            return "#{:02x}{:02x}{:02x}".format(*t)
+
+        primary_hex = _rgb(primary_color)
+        accent_hex  = _rgb(accent_color)
+
+        # Derive a small palette cycling from primary → accent → muted variants
+        palette = [
+            primary_hex,
+            accent_hex,
+            "#{:02x}{:02x}{:02x}".format(
+                (primary_color[0] + 128) // 2,
+                (primary_color[1] + 128) // 2,
+                (primary_color[2] + 128) // 2,
+            ),
+            "#{:02x}{:02x}{:02x}".format(
+                (accent_color[0] + 180) // 2,
+                (accent_color[1] + 180) // 2,
+                (accent_color[2] + 180) // 2,
+            ),
+            "#64748b",   # slate-500 as neutral 5th
+        ]
+
+        fig.update_layout(
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(family="IBM Plex Sans, Arial, sans-serif", size=10, color="#1a1a2e"),
+            modebar_remove=["logo", "toImage", "sendDataToCloud"],
+            xaxis=dict(
+                linecolor="#e5e7eb",
+                gridcolor="#f3f4f6",
+                zerolinecolor="#e5e7eb",
+            ),
+            yaxis=dict(
+                linecolor="#e5e7eb",
+                gridcolor="#f3f4f6",
+                zerolinecolor="#e5e7eb",
+            ),
+        )
+
+        # Re-color traces in order, cycling through the palette
+        for i, trace in enumerate(fig.data):
+            color = palette[i % len(palette)]
+            try:
+                if hasattr(trace, "marker") and trace.marker is not None:
+                    trace.marker.color = color
+                if hasattr(trace, "line") and trace.line is not None:
+                    trace.line.color = color
+                if isinstance(trace, go.Bar):
+                    trace.marker.color = color
+                if isinstance(trace, (go.Scatter, go.Scattergl)):
+                    if trace.fill not in (None, "none"):
+                        # Fan-chart fill: use very light alpha of the primary color
+                        trace.fillcolor = "rgba({},{},{},0.08)".format(*primary_color)
+            except Exception:
+                pass  # best-effort; don't break the whole figure
+    except Exception:
+        pass
+
+
+def _fig_to_png(fig, width: int = 900, height: int = 500,
+                primary_color: tuple = _DEFAULT_PRIMARY,
+                accent_color: tuple = _DEFAULT_ACCENT) -> bytes | None:
+    """Rasterise a Plotly figure to PNG bytes at 3× scale (~300 dpi equivalent).
+
+    Applies `_theme_figure` before rendering so all charts use the report's
+    branded color scheme and white background regardless of app theme.
+    """
     try:
         import plotly.io as pio
         import plotly.graph_objects as go
         fig = go.Figure(fig)
         fig.update_layout(title=None, margin=dict(t=24, b=40))
+        _theme_figure(fig, primary_color, accent_color)
         return pio.to_image(fig, format="png", width=width, height=height,
-                            scale=2, engine="kaleido")
+                            scale=3, engine="kaleido")
     except Exception:
         return None
 
@@ -765,6 +925,9 @@ def _cover_page(
     issuer_logo_bytes: bytes | None,
 ):
     pdf._is_cover = True
+    # Disable auto-page-break for the cover so overflowing content (long note
+    # names, many bullets) does NOT automatically insert a blank page 2.
+    pdf.set_auto_page_break(auto=False)
     pdf.add_page()
 
     # ── Full-width colored top band ───────────────────────────────────────
@@ -955,7 +1118,7 @@ def _cover_page(
         pdf.set_x(pdf.l_margin)
         pdf._sf(8.5, "regular")
         pdf.set_text_color(*_TEXT)
-        pdf.cell(5, 5.5, "•" if pdf._use_inter else chr(149))
+        pdf.cell(5, 5.5, "•" if pdf._use_unicode else chr(149))
         pdf.multi_cell(main_w - 5, 5.5, _safe(txt), align="J")
         pdf.ln(2)
 
@@ -1026,6 +1189,8 @@ def _cover_page(
     pdf.multi_cell(0, 2.8, _safe(_t("cover_topline", lang)), align="C")
 
     pdf._is_cover = False
+    # Re-enable auto-page-break for all content pages that follow
+    pdf.set_auto_page_break(auto=True, margin=28)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1114,8 +1279,9 @@ def generate_pdf_report(
     ])
 
     src_mc = f"{_t('src_mc', lang)}, {n_paths_val:,} paths"
-    pdf.figure(_fig_to_png(figures.get("irr_dist")), _t("fig_irr", lang), src_mc)
-    pdf.figure(_fig_to_png(figures.get("wof_fan")),  _t("fig_wof", lang), src_mc)
+    _kw = dict(primary_color=primary_color, accent_color=accent_color)
+    pdf.figure(_fig_to_png(figures.get("irr_dist"), **_kw), _t("fig_irr", lang), src_mc)
+    pdf.figure(_fig_to_png(figures.get("wof_fan"),  **_kw), _t("fig_wof", lang), src_mc)
 
     prob_by_period = results.get("prob_autocall_by_period", [])
     if prob_by_period:
@@ -1137,45 +1303,109 @@ def generate_pdf_report(
         pdf.add_page()
         pdf.section_title(_t("calibration", lang))
 
-        logo_strip_y = pdf.get_y()
-        n_assets = len(params)
-        strip_w  = usable / max(n_assets, 1)
-        any_logo = False
-        for i, p in enumerate(params):
-            nm    = str(p.name)
-            url   = (logo_urls or {}).get(nm, "")
-            ldata = _fetch_image_bytes(url) if url else None
-            cx    = pdf.l_margin + i * strip_w + (strip_w - 10) / 2
-            if ldata:
-                try:
-                    pdf.image(io.BytesIO(ldata), x=cx, y=logo_strip_y, w=10, h=10)
-                    any_logo = True
-                except Exception:
-                    pass
-        if any_logo:
-            pdf.set_y(logo_strip_y + 12)
-        else:
-            pdf.set_y(logo_strip_y)
+        # Build the calibration table.  The "Asset" column uses an inline logo +
+        # name approach: we draw the table row-by-row so we can interleave the
+        # small logo image at the left edge of each asset row.
+        n_assets   = len(params)
+        col_w_asset = usable * 0.18
+        col_w_rest  = usable * 0.1025
+        col_widths  = [col_w_asset] + [col_w_rest] * 8
+        headers     = [_t("asset", lang), "S0", "mu p.a.", "Vol (V0)", "Vol (theta)",
+                       "kappa", "xi", "rho", _t("feller", lang)]
+        aligns      = ["L"] + ["R"] * 8
 
-        hp_rows = []
+        # Prefetch all logos so we know row height before drawing
+        _LOGO_INLINE_W = 6.0
+        _LOGO_INLINE_H = 6.0
+        _ROW_H_CALIB   = 8.0   # slightly taller than the default 6 to fit logos
+
+        logo_cache: dict[str, bytes | None] = {}
         for p in params:
+            nm  = str(p.name)
+            url = (logo_urls or {}).get(nm, "")
+            logo_cache[nm] = _fetch_image_bytes(url) if url else None
+
+        # ── Draw filled header row ──
+        if pdf.get_y() > pdf.h - 55:
+            pdf.add_page()
+        pdf.set_fill_color(*pdf.primary_color)
+        pdf.set_text_color(*_WHITE)
+        pdf._sf(7.5, "semibold")
+        for h, w, a in zip(headers, col_widths, aligns):
+            pdf.cell(w, 7, f" {h} ", border=0, fill=True, align=a)
+        pdf.ln()
+        pdf.set_draw_color(*pdf.accent_color)
+        pdf.set_line_width(0.25)
+        pdf.line(pdf.l_margin, pdf.get_y(),
+                 pdf.l_margin + sum(col_widths), pdf.get_y())
+        pdf.set_text_color(*_TEXT)
+        pdf._sf(8, "regular")
+
+        for i, p in enumerate(params):
+            if pdf.get_y() > pdf.h - 30:
+                pdf.add_page()
+                # Repeat header
+                pdf.set_fill_color(*pdf.primary_color)
+                pdf.set_text_color(*_WHITE)
+                pdf._sf(7.5, "semibold")
+                for h, w, a in zip(headers, col_widths, aligns):
+                    pdf.cell(w, 7, f" {h} ", border=0, fill=True, align=a)
+                pdf.ln()
+                pdf.set_text_color(*_TEXT)
+                pdf._sf(8, "regular")
+
+            nm = str(p.name)
             try:
                 ok, _ = p.feller_condition()
             except Exception:
                 ok = False
-            hp_rows.append([
-                str(p.name), f"{p.S0:,.2f}", f"{p.mu * 100:.1f}%",
+            data_cells = [
+                f"{p.S0:,.2f}", f"{p.mu * 100:.1f}%",
                 f"{np.sqrt(p.V0) * 100:.1f}%", f"{np.sqrt(p.theta) * 100:.1f}%",
                 f"{p.kappa:.2f}", f"{p.xi:.2f}", f"{p.rho:.2f}",
                 "OK" if ok else "!",
-            ])
-        pdf.data_table(
-            [_t("asset", lang), "S0", "mu p.a.", "Vol (V0)", "Vol (theta)",
-             "kappa", "xi", "rho", _t("feller", lang)],
-            hp_rows,
-            col_widths=[usable * 0.18] + [usable * 0.1025] * 8,
-        )
-        pdf.figure(_fig_to_png(figures.get("corr"), width=560, height=460),
+            ]
+            fill_color = _ROW_ALT if i % 2 == 0 else _WHITE
+            pdf.set_fill_color(*fill_color)
+
+            row_y = pdf.get_y()
+
+            # ── Asset cell with inline logo ──
+            pdf.set_fill_color(*fill_color)
+            pdf.rect(pdf.l_margin, row_y, col_w_asset, _ROW_H_CALIB, style="F")
+            ldata = logo_cache.get(nm)
+            text_x = pdf.l_margin + 2
+            if ldata:
+                try:
+                    logo_y = row_y + (_ROW_H_CALIB - _LOGO_INLINE_H) / 2
+                    pdf.image(io.BytesIO(ldata),
+                              x=pdf.l_margin + 1, y=logo_y,
+                              w=_LOGO_INLINE_W, h=_LOGO_INLINE_H)
+                    text_x = pdf.l_margin + _LOGO_INLINE_W + 3
+                except Exception:
+                    pass  # logo failed; just print the name
+            pdf.set_xy(text_x, row_y + (_ROW_H_CALIB - 4) / 2)
+            pdf._sf(8, "semibold")
+            pdf.set_text_color(*_TEXT)
+            avail_w = col_w_asset - (text_x - pdf.l_margin) - 1
+            pdf.cell(avail_w, 4, pdf._safe(nm))
+
+            # ── Remaining data cells ──
+            pdf._sf(8, "regular")
+            for cell_val, w, a in zip(data_cells, col_widths[1:], aligns[1:]):
+                pdf.set_xy(pdf.get_x(), row_y)
+                pdf.set_fill_color(*fill_color)
+                pdf.cell(w, _ROW_H_CALIB, f" {cell_val} ", border=0, fill=True, align=a)
+            pdf.ln(_ROW_H_CALIB - (pdf.get_y() - row_y))
+            pdf.set_y(row_y + _ROW_H_CALIB)
+
+        # Bottom rule
+        pdf.set_draw_color(*_HAIRLINE)
+        pdf.set_line_width(0.2)
+        pdf.line(pdf.l_margin, pdf.get_y(),
+                 pdf.l_margin + sum(col_widths), pdf.get_y())
+        pdf.ln(4)
+        pdf.figure(_fig_to_png(figures.get("corr"), width=560, height=460, **_kw),
                    _t("fig_corr", lang), _t("src_hist", lang), w=105, h=86)
 
     # ── 5. Historical backtest ─────────────────────────────────────────────
@@ -1190,9 +1420,9 @@ def generate_pdf_report(
             (_t("bt_knock_in_pct",   lang), f"{bt_summary.get('prob_knock_in', 0):.1%}"),
         ])
         if bt_figures:
-            pdf.figure(_fig_to_png(bt_figures.get("outcome")),
+            pdf.figure(_fig_to_png(bt_figures.get("outcome"), **_kw),
                        _t("fig_bt_outcome", lang), _t("src_hist", lang))
-            pdf.figure(_fig_to_png(bt_figures.get("irr_scatter")),
+            pdf.figure(_fig_to_png(bt_figures.get("irr_scatter"), **_kw),
                        _t("fig_bt_irr", lang), _t("src_hist", lang))
 
     # ── 6. Current performance ─────────────────────────────────────────────
@@ -1229,7 +1459,7 @@ def generate_pdf_report(
             pdf.data_table(obs_headers, obs_data, col_widths=obs_w,
                            aligns=["L"] * n_cols)
 
-        pdf.figure(_fig_to_png(live_figure), _t("fig_live", lang), _t("src_hist", lang))
+        pdf.figure(_fig_to_png(live_figure, **_kw), _t("fig_live", lang), _t("src_hist", lang))
 
     # ── 7. Disclaimers ─────────────────────────────────────────────────────
     pdf.add_page()
