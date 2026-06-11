@@ -84,6 +84,7 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "expected_coupon_metric":    ("Expected Coupon",                   "Cupón Esperado"),
     "prob_autocalled":           ("P(Autocalled)",                     "P(Autocall)"),
     "prob_knock_in_metric":      ("P(Knock-in)",                       "P(Knock-in)"),
+    "loss_given_ki_metric":      ("IRR if Knocked In",                 "TIR si Knock-in"),
     "barrier_rescued_caption":   (
         "Barrier breached on {barrier:.2%} of paths; {rescued:.2%} were rescued to par by the"
         "final redemption condition ({basket} ≥ {level:.0%}).",
@@ -253,6 +254,10 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "live_metric_worst_asset":   ("Worst Asset",                       "Activo Más Débil"),
     "live_metric_vs_ki":         ("vs KI Barrier",                     "vs Barrera KI"),
     "live_metric_vs_autocall":   ("vs Autocall",                       "vs Autocall"),
+    "live_metric_ki_buffer":     ("KI Buffer",                         "Margen vs KI"),
+    "live_metric_ac_buffer":     ("Autocall Buffer",                   "Margen vs Autocall"),
+    "live_delta_barrier_ref":    ("KI barrier: {barrier:.0%}",         "Barrera KI: {barrier:.0%}"),
+    "live_delta_autocall_ref":   ("Autocall barrier: {barrier:.0%}",   "Barrera autocall: {barrier:.0%}"),
     "live_asset_perf_header":    ("#### Current Asset Performance",    "#### Rendimiento Actual por Activo"),
     "live_obs_history_header":   ("#### Observation History",          "#### Historial de Observaciones"),
     "live_col_period":           ("Period",                            "Período"),
@@ -547,6 +552,14 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "la barrera de redención son 'rescatadas' a la par aunque el peor haya tocado el "
         "nivel de KI — esas se excluyen aquí.",
     ),
+    "mc_help_loss_given_ki":     (
+        "Expected annualised return (IRR) on paths where the knock-in barrier is "
+        "breached at maturity — i.e. the average outcome for the loss scenarios. "
+        "Shows '—' if no knock-in paths exist in this simulation.",
+        "Retorno anualizado esperado (TIR) en las trayectorias donde la barrera de "
+        "knock-in se toca al vencimiento — es decir, el resultado promedio de los "
+        "escenarios de pérdida. Muestra '—' si no hay trayectorias de knock-in.",
+    ),
     "mc_help_principal":        (
         "Principal returned on this path as a fraction of par: 100% if "
         "the note autocalled or matured without a knock-in; the worst-of "
@@ -666,6 +679,24 @@ _STRINGS: dict[str, tuple[str, str]] = {
         "Nivel worst-of como porcentaje de la barrera de autocall ({barrier:.0%}). "
         "Valores ≥ 100% en una fecha de observación elegible dispararían un rescate "
         "anticipado. El delta muestra la distancia a la barrera en puntos porcentuales.",
+    ),
+    "live_help_ki_buffer":      (
+        "How far the worst-of basket is above the knock-in barrier ({barrier:.0%}), "
+        "in percentage-point terms. Positive = safe; negative = barrier already breached. "
+        "The note loses principal protection if the worst-of closes below the KI barrier "
+        "on the final observation date.",
+        "Cuánto está el worst-of por encima de la barrera de knock-in ({barrier:.0%}), "
+        "en puntos porcentuales. Positivo = seguro; negativo = barrera ya cruzada. "
+        "La nota pierde protección del capital si el worst-of cierra por debajo de la "
+        "barrera KI en la fecha de observación final.",
+    ),
+    "live_help_ac_buffer":      (
+        "How far the worst-of basket is above the autocall barrier ({barrier:.0%}), "
+        "in percentage-point terms. Positive = the note could be called at the next "
+        "eligible observation; negative = not yet at the call level.",
+        "Cuánto está el worst-of por encima de la barrera de autocall ({barrier:.0%}), "
+        "en puntos porcentuales. Positivo = la nota podría ser llamada en la próxima "
+        "observación elegible; negativo = aún por debajo del nivel de llamada.",
     ),
     "live_help_coupon_irr":     (
         "Total coupons paid so far ÷ elapsed time in years — a simple "

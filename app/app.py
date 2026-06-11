@@ -1149,7 +1149,7 @@ elif st.session_state["page"] == "dashboard":
             }
             # ── Summary metrics ───────────────────────────────────────
             st.header(tr("summary_stats_header"))
-            c1, c2, c3, c4, c5 = st.columns(5)
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
             c1.metric(tr("expected_irr_pa"),  f"{R['expected_irr']:.2%}",
                       help=tr("mc_help_expected_irr"))
             c2.metric(tr("expected_total_return"), f"{R['expected_total_return']:.2%}",
@@ -1160,6 +1160,14 @@ elif st.session_state["page"] == "dashboard":
                       help=tr("mc_help_prob_autocall"))
             c5.metric(tr("prob_knock_in_metric"), f"{R['prob_knock_in_total']:.2%}",
                       help=tr("mc_help_prob_knock_in"))
+            _ki_mask = R.get("knock_in_triggered")
+            _lgki_str = (
+                f"{float(R['annualized_returns'][_ki_mask].mean()):.2%}"
+                if _ki_mask is not None and _ki_mask.any()
+                else "—"
+            )
+            c6.metric(tr("loss_given_ki_metric"), _lgki_str,
+                      help=tr("mc_help_loss_given_ki"))
             if R.get("prob_rescued", 0) > 0:
                 st.caption(
                     tr("barrier_rescued_caption",
@@ -1670,16 +1678,20 @@ elif st.session_state["page"] == "dashboard":
                                 help=tr("live_help_wof_today"))
                     _lc2.metric(tr("live_metric_worst_asset"), _worst_asset_today,
                                 help=tr("live_help_worst_asset"))
-                    _lc3.metric(tr("live_metric_vs_ki"),
-                                f"{_wof_today / run_terms.knock_in_barrier:.1%}",
-                                delta=f"{_wof_today - run_terms.knock_in_barrier:.1%}",
-                                delta_color="normal",
-                                help=tr("live_help_vs_ki", barrier=run_terms.knock_in_barrier))
-                    _lc4.metric(tr("live_metric_vs_autocall"),
-                                f"{_wof_today / run_terms.autocall_barrier:.1%}",
-                                delta=f"{_wof_today - run_terms.autocall_barrier:.1%}",
-                                delta_color="normal",
-                                help=tr("live_help_vs_autocall", barrier=run_terms.autocall_barrier))
+                    _ki_buf  = _wof_today - run_terms.knock_in_barrier
+                    _ac_buf  = _wof_today - run_terms.autocall_barrier
+                    _lc3.metric(tr("live_metric_ki_buffer"),
+                                f"{_ki_buf:+.1%}",
+                                delta=tr("live_delta_barrier_ref",
+                                         barrier=run_terms.knock_in_barrier),
+                                delta_color="off",
+                                help=tr("live_help_ki_buffer", barrier=run_terms.knock_in_barrier))
+                    _lc4.metric(tr("live_metric_ac_buffer"),
+                                f"{_ac_buf:+.1%}",
+                                delta=tr("live_delta_autocall_ref",
+                                         barrier=run_terms.autocall_barrier),
+                                delta_color="off",
+                                help=tr("live_help_ac_buffer", barrier=run_terms.autocall_barrier))
 
                     # ── Per-asset current performance ─────────────────
                     st.markdown(tr("live_asset_perf_header"))
