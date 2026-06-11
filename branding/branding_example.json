@@ -2,5 +2,7 @@
   "firm_name": "Acme Capital",
   "primary_color": "#003366",
   "accent_color": "#00A0DC",
+  "logo_file": "branding/acme_logo.png",
+  "logo_base64": "",
   "logo_url": "https://www.google.com/s2/favicons?sz=64&domain=example.com"
 }

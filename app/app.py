@@ -1857,6 +1857,9 @@ elif st.session_state["page"] == "dashboard":
                 name: (TICKER_LOGOS.get(sym) or _LOGO_BASE.format(sym=sym))
                 for sym, name in run_terms.tickers.items()
             }
+            # display name -> ticker symbol, so the PDF can look for a local
+            # branding/ticker_logos/{SYMBOL}.png before fetching a URL.
+            _pdf_logo_tickers = {name: sym for sym, name in run_terms.tickers.items()}
             _pdf_issuer_logo_url = get_issuer_logo_url(getattr(run_terms, "issuer", "") or "")
             _pdf_bytes = generate_pdf_report(
                 terms            = run_terms,
@@ -1871,9 +1874,10 @@ elif st.session_state["page"] == "dashboard":
                 logo_urls        = _pdf_logo_urls,
                 issuer_logo_url  = _pdf_issuer_logo_url,
                 branding         = st.session_state.get("branding"),
+                logo_tickers     = _pdf_logo_tickers,
             )
         _pdf_slot.download_button(
-            "⬇ Download PDF",
+            "Download PDF",
             data=_pdf_bytes,
             file_name=f"{run_terms.name.replace(' ', '_')}_report.pdf",
             mime="application/pdf",

@@ -111,24 +111,55 @@ def build_irr_distribution(
     irr_maturity = irr_all[autocall_events == 0]
     n_total      = len(irr_all)
 
-    # Shared bin edges computed from the full distribution.
-    # Bins span the 1st–99th percentile so they aren't wasted on extreme
-    # outliers; values beyond that are CLIPPED into the edge bins (not
-    # dropped) so the bars genuinely sum to 100% of paths.
-    lo = float(np.percentile(irr_all, 1))
-    hi = float(np.percentile(irr_all, 99))
-    if hi <= lo:                      # degenerate distribution guard
-        lo, hi = lo - 0.01, hi + 0.01
-    n_bins = 60
-    bin_size = (hi - lo) / n_bins
-    irr_called   = np.clip(irr_called,   lo, hi)
-    irr_maturity = np.clip(irr_maturity, lo, hi)
+    # ── Adaptive bin edges + zoom window ───────────────────────────────
+    # The distribution can be extremely narrow and concentrated (e.g. a note
+    # that autocalls ~84% of the time clusters almost all mass at one IRR, with
+    # a thin loss tail reaching far to the left). Binning over the full
+    # min..max range then wastes nearly every bin and crams all bars at one
+    # edge, and the x-axis spans a useless -50%..+10%.
+    #
+    # Fix: choose a ROBUST inner window from percentiles of the data (so the
+    # concentrated bulk fills the plot), build adaptive-width bins over that
+    # window, and CLIP outliers into the edge bins (so the thin loss tail still
+    # shows as a small edge bar — nothing is dropped and bars sum to 100%).
+    lo_data = float(np.min(irr_all))
+
+    # Robust window: 2nd–98th percentile captures the bulk while trimming the
+    # extreme tail that would otherwise dominate the axis.
+    p_lo = float(np.percentile(irr_all, 2))
+    p_hi = float(np.percentile(irr_all, 98))
+    # Always keep 0% and the reference markers in view when they're nearby.
+    lo_w = min(p_lo, 0.0, expected_irr, coupon_rate_pa)
+    hi_w = max(p_hi, expected_irr, coupon_rate_pa)
+    span = hi_w - lo_w
+    if span <= 1e-9:                      # fully degenerate (all identical)
+        lo_w, hi_w = lo_w - 0.01, hi_w + 0.01
+        span = hi_w - lo_w
+    pad = span * 0.05
+    lo_e, hi_e = lo_w - pad, hi_w + pad
+
+    # Adaptive bin count from the data spread inside the window, clamped so we
+    # never get 1–2 bins (unreadable) or hundreds.
+    try:
+        inner = irr_all[(irr_all >= lo_w) & (irr_all <= hi_w)]
+        auto_edges = np.histogram_bin_edges(inner if inner.size > 1 else irr_all, bins="auto")
+        n_bins = len(auto_edges) - 1
+    except Exception:
+        n_bins = 40
+    n_bins = int(np.clip(n_bins, 25, 80))
+
+    edges    = np.linspace(lo_e, hi_e, n_bins + 1)
+    bin_size = (hi_e - lo_e) / n_bins
+
+    # Clip into the window so tail paths land in the edge bins (counted, not lost)
+    irr_called_c   = np.clip(irr_called,   lo_e, hi_e)
+    irr_maturity_c = np.clip(irr_maturity, lo_e, hi_e)
 
     fig = go.Figure()
 
-    if len(irr_called) > 0:
+    if len(irr_called_c) > 0:
         # Weight each count by 1/n_total so both traces share the same probability axis
-        counts_c, edges = np.histogram(irr_called, bins=np.linspace(lo, hi, n_bins + 1))
+        counts_c, _ = np.histogram(irr_called_c, bins=edges)
         fig.add_trace(go.Bar(
             x=edges[:-1] + bin_size / 2,
             y=counts_c / n_total,
@@ -138,8 +169,8 @@ def build_irr_distribution(
             opacity=0.85,
         ))
 
-    if len(irr_maturity) > 0:
-        counts_m, edges = np.histogram(irr_maturity, bins=np.linspace(lo, hi, n_bins + 1))
+    if len(irr_maturity_c) > 0:
+        counts_m, _ = np.histogram(irr_maturity_c, bins=edges)
         fig.add_trace(go.Bar(
             x=edges[:-1] + bin_size / 2,
             y=counts_m / n_total,
@@ -149,18 +180,31 @@ def build_irr_distribution(
             opacity=0.75,
         ))
 
-    # Reference lines — stagger annotation positions to avoid overlap
+    # X-axis zooms to the robust window. Flag a clipped loss tail in the subtitle.
+    # Extra right-hand headroom so the Mean/Coupon labels (which can sit near the
+    # right edge for a high-autocall note) have room and never get clipped.
+    x_range = [lo_e, hi_e + span * 0.10]
+    _clip_note = (f"  ·  loss tail to {lo_data:.0%} clipped into left bin"
+                  if lo_data < lo_e - 1e-9 else "")
+
+    # ── Reference lines — stagger labels so they never collide ─────────
+    # Mean and Coupon can sit almost on top of each other (a note pricing near
+    # its coupon). Anchor BOTH labels to the LEFT of their line so the text
+    # grows inward (never off the right edge), and stagger them vertically —
+    # Mean at the top, Coupon a row lower via yshift — so they never overlap.
     fig.add_vline(
         x=expected_irr, line_dash="dash", line_color=_GREEN_MID, line_width=1.5,
         annotation_text=f"Mean {expected_irr:.2%}",
-        annotation_position="top right",
+        annotation_position="top left",
         annotation_font_size=11,
+        annotation_yshift=2,
     )
     fig.add_vline(
         x=coupon_rate_pa, line_dash="dot", line_color=_GREY, line_width=1.5,
         annotation_text=f"Coupon {coupon_rate_pa:.2%} p.a.",
         annotation_position="top left",
         annotation_font_size=11,
+        annotation_yshift=-18,
     )
     fig.add_vline(
         x=0, line_dash="solid", line_color=_RED, line_width=1,
@@ -170,8 +214,8 @@ def build_irr_distribution(
     )
 
     fig.update_layout(
-        title="Annualised IRR Distribution — All Simulated Paths",
-        xaxis=dict(title="Annualised IRR (simple)", tickformat=".0%"),
+        title="Annualised IRR Distribution — All Simulated Paths" + _clip_note,
+        xaxis=dict(title="Annualised IRR (simple)", tickformat=".1%", range=x_range),
         yaxis=dict(title="Share of all paths", tickformat=".1%"),
         barmode="overlay",
         legend=dict(x=0.01, y=0.99),

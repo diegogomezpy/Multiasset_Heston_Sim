@@ -1,0 +1,34 @@
+# Local ticker / underlying logos
+
+Drop image files here to have the PDF report use **local** logos for the
+underlyings instead of fetching them from the web (which is unreliable and can
+leave broken-image boxes).
+
+## How it works
+
+When building the PDF, for each underlying the resolver looks for a file in this
+folder before falling back to a URL fetch. It tries, in order:
+
+1. `{TICKER}.png` / `{TICKER}.jpg` — the ticker symbol (e.g. `NVDA.png`, `C.png`)
+2. `{DisplayName}.png` / `{DisplayName}.jpg` — the display name (e.g. `Citigroup.png`)
+
+Matching is **case-insensitive** and tries `.png`, `.jpg`, `.jpeg`, `.svg` in
+that order.
+
+## Notes
+
+- **PNG or JPG recommended.** fpdf2 cannot render SVG natively, so `.svg` files
+  are skipped (the report falls back to the next source, or shows the name only).
+- A missing or unreadable file never crashes the report — it simply omits the
+  logo and prints a diagnostic to the console.
+- The firm/issuer logo for branding is configured separately via the
+  `logo_file` field in your `branding_*.json` (see `branding_example.json`).
+- Square images around 128×128 px look best in the small logo slots.
+
+## Examples
+
+```
+branding/ticker_logos/NVDA.png        # by ticker symbol
+branding/ticker_logos/Citigroup.png   # by display name
+branding/ticker_logos/cadiem.png      # firm logo (referenced from branding JSON)
+```

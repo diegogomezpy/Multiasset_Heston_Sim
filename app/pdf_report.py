@@ -36,10 +36,13 @@ import io
 import datetime
 import urllib.request
 import numpy as np
+import base64
 from pathlib import Path
 from fpdf import FPDF
 
-_FONT_DIR        = Path(__file__).parent.parent / "fonts"
+_REPO_ROOT       = Path(__file__).parent.parent
+_TICKER_LOGO_DIR = _REPO_ROOT / "branding" / "ticker_logos"
+_FONT_DIR        = _REPO_ROOT / "fonts"
 _INTER_TTC       = _FONT_DIR / "Inter.ttc"
 _IBM_REGULAR     = _FONT_DIR / "IBMPlexSans-Regular.ttf"
 _IBM_BOLD        = _FONT_DIR / "IBMPlexSans-Bold.ttf"
@@ -741,75 +744,140 @@ def _fetch_image_bytes(url: str, timeout: int = 8) -> bytes | None:
         return None
 
 
+def _read_local_image(path: Path) -> bytes | None:
+    """Read a local image file as raw bytes. fpdf2 cannot render SVG natively,
+    so SVG files are skipped (returns None) with a diagnostic. Any failure is
+    swallowed and returns None so a missing/bad file never crashes the PDF."""
+    try:
+        if not path.exists() or not path.is_file():
+            return None
+        if path.suffix.lower() == ".svg":
+            print(f"[PDF logo] SKIP SVG (not renderable by fpdf2): {path}")
+            return None
+        data = path.read_bytes()
+        if not data:
+            return None
+        print(f"[PDF logo] OK  {len(data):,} bytes  {path}")
+        return data
+    except Exception as exc:
+        print(f"[PDF logo] FAIL local {path!r}: {exc}")
+        return None
+
+
+def _resolve_local_path(spec: str) -> Path:
+    """Resolve a branding logo_file spec to an absolute path. Absolute paths are
+    honoured as-is; relative paths resolve against the repo root."""
+    p = Path(spec)
+    return p if p.is_absolute() else (_REPO_ROOT / p)
+
+
+def _load_logo(branding: dict | None) -> bytes | None:
+    """Resolve the firm/issuer branding logo, local-file-first.
+
+    Order of preference (first that yields bytes wins):
+      1. branding['logo_file']   — path to a local image (relative to repo root)
+      2. branding['logo_base64'] — a base64 string or data: URI
+      3. branding['logo_url']    — remote URL (last-resort network fetch)
+
+    Returns image bytes or None. Never raises — a failure simply omits the logo.
+    """
+    if not branding:
+        return None
+    # 1. Local file
+    spec = branding.get("logo_file")
+    if spec:
+        data = _read_local_image(_resolve_local_path(spec))
+        if data:
+            return data
+        print(f"[PDF logo] logo_file unusable ({spec}); trying next source")
+    # 2. Base64 / data URI
+    b64 = branding.get("logo_base64")
+    if b64:
+        try:
+            payload = b64.split(",", 1)[1] if b64.strip().startswith("data:") else b64
+            data = base64.b64decode(payload)
+            if data:
+                print(f"[PDF logo] OK  {len(data):,} bytes  (base64)")
+                return data
+        except Exception as exc:
+            print(f"[PDF logo] FAIL base64: {exc}")
+    # 3. Remote URL
+    url = branding.get("logo_url")
+    if url:
+        return _fetch_image_bytes(url)
+    return None
+
+
+def _find_ticker_logo_file(ticker: str) -> Path | None:
+    """Look for a local logo at branding/ticker_logos/{TICKER}.{png,jpg,svg}.
+
+    Case-insensitive match on the file stem; tries png, jpg, jpeg, svg in order.
+    SVG matches are returned (the caller's loader skips them gracefully).
+    Returns the first matching Path or None.
+    """
+    if not ticker or not _TICKER_LOGO_DIR.is_dir():
+        return None
+    want = ticker.strip().lower()
+    try:
+        candidates = list(_TICKER_LOGO_DIR.iterdir())
+    except Exception:
+        return None
+    # Preferred extension order
+    for ext in (".png", ".jpg", ".jpeg", ".svg"):
+        for f in candidates:
+            if f.is_file() and f.stem.lower() == want and f.suffix.lower() == ext:
+                return f
+    return None
+
+
+def _load_ticker_logo(display_name: str, url: str | None,
+                      symbol: str | None = None) -> bytes | None:
+    """Resolve a single underlying/ticker logo, local-folder-first.
+
+    Looks for branding/ticker_logos/{STEM}.{png,jpg,...} where STEM is tried as
+    the ticker symbol first, then the display name. Falls back to the supplied
+    URL. Never raises; returns None if nothing yields usable bytes.
+    """
+    for stem in (symbol, display_name):
+        if not stem:
+            continue
+        local = _find_ticker_logo_file(stem)
+        if local is not None:
+            data = _read_local_image(local)
+            if data:
+                return data
+    if url:
+        return _fetch_image_bytes(url)
+    return None
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Figure export helper
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _theme_figure(fig, primary_color: tuple, accent_color: tuple):
-    """Apply a clean neutral/branded theme to a Plotly figure before rasterising.
+    """Apply a clean print theme to a Plotly figure before rasterising.
 
-    Sets white backgrounds, report typography, branded trace colors, and removes
-    the Plotly logo watermark.  Called on every figure just before _fig_to_png().
+    Only sets white backgrounds, report typography, light gridlines and removes
+    the Plotly logo. It deliberately does NOT recolor traces: the chart builders
+    in app/charts.py already assign distinguishable, semantically-meaningful
+    colors (e.g. green "coupon paid" vs red "missed", star autocall markers,
+    fan-chart bands at 0.08 vs 0.20 alpha). Blindly cycling a 2-colour palette
+    over every trace used to collapse the fan-chart bands into one shade and
+    flatten the paid/missed marker colours — so we leave trace colours alone.
     """
     try:
-        import plotly.graph_objects as go
-        # Map RGB tuples to hex strings for Plotly
-        def _rgb(t):
-            return "#{:02x}{:02x}{:02x}".format(*t)
-
-        primary_hex = _rgb(primary_color)
-        accent_hex  = _rgb(accent_color)
-
-        # Derive a small palette cycling from primary → accent → muted variants
-        palette = [
-            primary_hex,
-            accent_hex,
-            "#{:02x}{:02x}{:02x}".format(
-                (primary_color[0] + 128) // 2,
-                (primary_color[1] + 128) // 2,
-                (primary_color[2] + 128) // 2,
-            ),
-            "#{:02x}{:02x}{:02x}".format(
-                (accent_color[0] + 180) // 2,
-                (accent_color[1] + 180) // 2,
-                (accent_color[2] + 180) // 2,
-            ),
-            "#64748b",   # slate-500 as neutral 5th
-        ]
-
         fig.update_layout(
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=dict(family="IBM Plex Sans, Arial, sans-serif", size=10, color="#1a1a2e"),
             modebar_remove=["logo", "toImage", "sendDataToCloud"],
-            xaxis=dict(
-                linecolor="#e5e7eb",
-                gridcolor="#f3f4f6",
-                zerolinecolor="#e5e7eb",
-            ),
-            yaxis=dict(
-                linecolor="#e5e7eb",
-                gridcolor="#f3f4f6",
-                zerolinecolor="#e5e7eb",
-            ),
         )
-
-        # Re-color traces in order, cycling through the palette
-        for i, trace in enumerate(fig.data):
-            color = palette[i % len(palette)]
-            try:
-                if hasattr(trace, "marker") and trace.marker is not None:
-                    trace.marker.color = color
-                if hasattr(trace, "line") and trace.line is not None:
-                    trace.line.color = color
-                if isinstance(trace, go.Bar):
-                    trace.marker.color = color
-                if isinstance(trace, (go.Scatter, go.Scattergl)):
-                    if trace.fill not in (None, "none"):
-                        # Fan-chart fill: use very light alpha of the primary color
-                        trace.fillcolor = "rgba({},{},{},0.08)".format(*primary_color)
-            except Exception:
-                pass  # best-effort; don't break the whole figure
+        # Style axes without disturbing any explicit per-axis ranges/tickformats
+        fig.update_xaxes(linecolor="#e5e7eb", gridcolor="#f3f4f6",
+                         zerolinecolor="#e5e7eb")
+        fig.update_yaxes(linecolor="#e5e7eb", gridcolor="#f3f4f6",
+                         zerolinecolor="#e5e7eb")
     except Exception:
         pass
 
@@ -923,6 +991,7 @@ def _cover_page(
     lang: str,
     logo_urls: dict[str, str] | None,
     issuer_logo_bytes: bytes | None,
+    logo_tickers: dict[str, str] | None = None,
 ):
     pdf._is_cover = True
     # Disable auto-page-break for the cover so overflowing content (long note
@@ -1013,7 +1082,8 @@ def _cover_page(
     _ROW_H  = 11.0
     for nm in asset_names:
         logo_url  = (logo_urls or {}).get(nm, "")
-        logo_data = _fetch_image_bytes(logo_url) if logo_url else None
+        sym       = (logo_tickers or {}).get(nm)
+        logo_data = _load_ticker_logo(nm, logo_url, sym)
         row_y = y + 1.0
         if logo_data:
             try:
@@ -1210,6 +1280,7 @@ def generate_pdf_report(
     logo_urls: dict[str, str] | None = None,
     issuer_logo_url: str | None = None,
     branding: dict | None = None,
+    logo_tickers: dict[str, str] | None = None,
 ) -> bytes:
     """
     Build the full institutional-style PDF report.
@@ -1222,13 +1293,13 @@ def generate_pdf_report(
     """
     # ── Resolve branding ──────────────────────────────────────────────
     primary_color, accent_color, firm_name = _resolve_palette(branding)
-    brand_logo_bytes = None
-    if branding and branding.get("logo_url"):
-        brand_logo_bytes = _fetch_image_bytes(branding["logo_url"])
-
-    issuer_logo_bytes = _fetch_image_bytes(issuer_logo_url) if issuer_logo_url else None
+    # Local-file-first: logo_file -> logo_base64 -> logo_url
+    brand_logo_bytes = _load_logo(branding)
 
     issuer  = getattr(terms, "issuer", "") or ""
+    # Issuer logo: try a local branding/ticker_logos/{issuer}.png first, else URL.
+    issuer_logo_bytes = _load_ticker_logo(issuer, issuer_logo_url) if (issuer or issuer_logo_url) else None
+
     doc_ref = f"{_t('series_title', lang)} | {terms.name}"
     pdf = _NotePDF(
         lang            = lang,
@@ -1242,7 +1313,7 @@ def generate_pdf_report(
 
     # ── 1. Cover ───────────────────────────────────────────────────────────
     _cover_page(pdf, terms, results, asset_names, bt_summary, live_data, lang,
-                logo_urls, issuer_logo_bytes)
+                logo_urls, issuer_logo_bytes, logo_tickers)
 
     # ── 2. Note terms ──────────────────────────────────────────────────────
     pdf.add_page()
@@ -1323,7 +1394,8 @@ def generate_pdf_report(
         for p in params:
             nm  = str(p.name)
             url = (logo_urls or {}).get(nm, "")
-            logo_cache[nm] = _fetch_image_bytes(url) if url else None
+            sym = (logo_tickers or {}).get(nm)
+            logo_cache[nm] = _load_ticker_logo(nm, url, sym)
 
         # ── Draw filled header row ──
         if pdf.get_y() > pdf.h - 55:
